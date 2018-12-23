@@ -16,7 +16,7 @@ template<>
 uint128_g get_random_elem<uint128_g>()
 {
     uint128_g res;
-    for (uint32_t i =0; i < 4; i++)
+    for (uint32_t i =0; i < HALF_N; i++)
         res.n[i] = rand();
     return res;
 }
@@ -25,7 +25,7 @@ template<>
 uint256_g get_random_elem<uint256_g>()
 {
     uint256_g res;
-    for (uint32_t i =0; i < 8; i++)
+    for (uint32_t i =0; i < N; i++)
         res.n[i] = rand();
     return res;
 }

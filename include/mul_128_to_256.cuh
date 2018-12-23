@@ -29,12 +29,12 @@ DEVICE_FUNC inline uint256_g mul_uint128_to_256_naive(const uint128_g& u, const 
     uint256_g w;
 		
     #pragma unroll
-	for (uint32_t j = 0; j < 4; j++)
+	for (uint32_t j = 0; j < HALF_N; j++)
 	{
         uint32_t k = 0;
 
         #pragma unroll
-        for (uint32_t i = 0; i < 4; i++)
+        for (uint32_t i = 0; i < HALF_N; i++)
         {
             uint32_t high_word = 0;
             uint32_t low_word = 0;
@@ -45,7 +45,7 @@ DEVICE_FUNC inline uint256_g mul_uint128_to_256_naive(const uint128_g& u, const 
             w.n[i + j] = low_word;
         }
 
-        w.n[4 + j] = k;
+        w.n[HALF_N + j] = k;
     }
 
     return w;	

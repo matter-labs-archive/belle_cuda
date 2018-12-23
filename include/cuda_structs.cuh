@@ -4,9 +4,17 @@
 #ifdef __CUDACC__
 #include <cuda_runtime.h>
 #define DEVICE_FUNC __device__
+#define DEVICE_VAR __device__
+#define CONST_MEMORY __constant__
 #else
 #define DEVICE_FUNC
+#define DEVICE_VAR
+#define CONST_MEMORY
 #endif
+
+#define HALF_N 4
+#define N 8
+#define N_DOUBLED 16
 
 #include <stdint.h>
 
@@ -26,6 +34,12 @@ struct uint128_g
             uint64_t high;
         };
     };
+};
+
+struct uint128_with_carry_g
+{
+    uint128_g val;
+    uint32_t carry;
 };
 
 //NB: may be this should somehow help?

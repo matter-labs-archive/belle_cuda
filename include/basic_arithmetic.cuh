@@ -9,16 +9,21 @@
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 
 //NB: https://devtalk.nvidia.com/default/topic/948014/forward-looking-gpu-integer-performance/?offset=14
-//It seems CUDA has no natural support for 64-bit integer arithmetic
+//It seems CUDA has no natural support for 64-bit integer arithmetic (and 16 bit will be obviously toooooooo slow)
 
-DEVICE_FUNC inline uint128_g add_uint128_asm(const uint128_g& lhs, const uint128_g& rhs)
+//in order to implement Karatsuba multiplication we need addition with carry!
+//HOW TO GET VALUE OF CARRY FLAG!
+//NO WAY! VERY DUMB STUPID NVIDIA PTX ASSEMBLY!
+
+DEVICE_FUNC inline uint128_with_carry_g add_uint128_with_carry_asm(const uint128_g& lhs, const uint128_g& rhs)
 {
-    uint128_g result;
-		asm (	"add.cc.u32      %0, %4,  %8;\n\t"
-         	 	"addc.cc.u32     %1, %5,  %9;\n\t"
-         	 	"addc.cc.u32     %2, %6,  %10;\n\t"
-         		"addc.u32        %3, %7,  %11;\n\t"
-         		: "=r"(result.n[0]), "=r"(result.n[1]), "=r"(result.n[2]), "=r"(result.n[3])
+    uint128_with_carry_g result;
+		asm (	"add.cc.u32      %0, %5,  %9;\n\t"
+         	 	"addc.cc.u32     %1, %6,  %10;\n\t"
+         	 	"addc.cc.u32     %2, %7,  %11;\n\t"
+         		"addc.cc.u32     %3, %8,  %12;\n\t"
+                "addc.u32        %4, 0, 0;\n\t"
+         		: "=r"(result.val.n[0]), "=r"(result.val.n[1]), "=r"(result.val.n[2]), "=r"(result.val.n[3]), "=r"(result.carry)
 				: "r"(lhs.n[0]), "r"(lhs.n[1]), "r"(lhs.n[2]), "r"(lhs.n[3]),
 				    "r"(rhs.n[0]), "r"(rhs.n[1]), "r"(rhs.n[2]), "r"(rhs.n[3]));
 
@@ -40,7 +45,7 @@ DEVICE_FUNC inline uint128_g sub_uint128_asm(const uint128_g& lhs, const uint128
     return result;
 }
 
-//256 bit addition & substraction & comparison
+//256 bit addition & substraction
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -50,7 +55,7 @@ DEVICE_FUNC inline uint256_g add_uint256_naive(const uint256_g& lhs, const uint2
     uint32_t carry = 0;
     uint256_g result;
     #pragma unroll
-    for (uint32_t i = 0; i < 8; i++)
+    for (uint32_t i = 0; i < N; i++)
     {
         result.n[i] = lhs.n[i] + rhs.n[i] + carry;
         carry = (result.n[i] < lhs.n[i]);
@@ -85,7 +90,7 @@ DEVICE_FUNC inline uint256_g sub_uint256_naive(const uint256_g& lhs, const uint2
     uint256_g result;
     
     #pragma unroll
-	for (uint32_t i = 0; i < 8; i++)
+	for (uint32_t i = 0; i < N; i++)
     
     {
         uint32_t a = lhs.n[i], b = rhs.n[i];
@@ -126,10 +131,16 @@ DEVICE_FUNC inline uint256_g sub_uint256_asm(const uint256_g& lhs, const uint256
     return result;
 }
 
+//256 comparison and zero equality
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
 DEVICE_FUNC inline int cmp_uint256_naive(const uint256_g& lhs, const uint256_g& rhs)
 {
     #pragma unroll
-    for (int32_t i = 7; i >= 0; i--)
+    for (int32_t i = N -1 ; i >= 0; i--)
     {
         if (lhs.n[i] > rhs.n[i])
             return 1;
@@ -138,5 +149,20 @@ DEVICE_FUNC inline int cmp_uint256_naive(const uint256_g& lhs, const uint256_g& 
     }
     return 0;
 }
+
+DEVICE_FUNC bool is_zero(const uint256_g& x)
+{
+    #pragma unroll
+    for (int32_t i = 0 ; i < N; i++)
+    {
+        if (x.n[i] != 0)
+            return false;
+    }
+    return true;
+}
+
+#define FASTEST_256_cmp(a, b) cmp_uint256_naive(a, b)
+#define FASTEST_256_add(a, b) add_uint256_asm(a, b)
+#define FASTEST_256_sub(a, b) sub_uint256_asm(a, b)
 
 #endif
