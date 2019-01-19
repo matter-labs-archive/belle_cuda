@@ -1,30 +1,6 @@
-#ifndef MUL_128_to_256_CUH
-#define MUL_128_to_256_CUH
+#include "cuda_structs.h"
 
-#include "cuda_structs.cuh"
-
-//helper functions for naive multiplication & naive mult itself
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-DEVICE_FUNC inline uint32_t device_long_mul(uint32_t x, uint32_t y, uint32_t* high_ptr)
-	{
-		uint32_t high = __umulhi(x, y);
-		*high_ptr = high;
-		return x * y;
-	}
-
-DEVICE_FUNC inline uint32_t device_fused_add(uint32_t x, uint32_t y, uint32_t* high_ptr)
-{
-	uint32_t z = x + y;
-	if (z < x)
-		(*high_ptr)++;
-    return z;
-}	
-
-DEVICE_FUNC inline uint256_g mul_uint128_to_256_naive(const uint128_g& u, const uint128_g& v)
+DEVICE_FUNC uint256_g mul_uint128_to_256_naive(const uint128_g& u, const uint128_g& v)
 {
     uint256_g w;
 		
@@ -51,64 +27,12 @@ DEVICE_FUNC inline uint256_g mul_uint128_to_256_naive(const uint128_g& u, const 
     return w;	
 }
 
-//asm based multi[lications:
-//NB: the only difference between ver1 and ver2 is additional register allocation
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-
-//this code was produced by my generator
-DEVICE_FUNC inline uint256_g mul_uint128_to_256_asm_ver1(const uint128_g& lhs, const uint128_g& rhs)
-{
-    uint256_g w;
-    asm (       "mul.lo.u32   %0, %8, %12;\n\t"
-                "mul.hi.u32   %1, %8, %12;\n\t"
-                "mad.lo.cc.u32   %1, %9, %12, %1;\n\t"
-                "madc.hi.u32   %2, %9, %12, 0;\n\t"
-                "mad.lo.cc.u32   %1, %8, %13, %1;\n\t"
-                "madc.hi.cc.u32   %2, %8, %13, %2;\n\t"
-                "madc.hi.u32   %3, %10, %12, 0;\n\t"
-                "mad.lo.cc.u32   %2, %10, %12, %2;\n\t"
-                "madc.hi.cc.u32   %3, %9, %13, %3;\n\t"
-                "madc.hi.u32   %4, %11, %12, 0;\n\t"
-                "mad.lo.cc.u32   %2, %9, %13, %2;\n\t"
-                "madc.hi.cc.u32   %3, %8, %14, %3;\n\t"
-                "madc.hi.cc.u32   %4, %10, %13, %4;\n\t"
-                "madc.hi.u32   %5, %11, %13, 0;\n\t"
-                "mad.lo.cc.u32   %2, %8, %14, %2;\n\t"
-                "madc.lo.cc.u32   %3, %11, %12, %3;\n\t"
-                "madc.hi.cc.u32   %4, %9, %14, %4;\n\t"
-                "madc.hi.cc.u32   %5, %10, %14, %5;\n\t"
-                "madc.hi.u32   %6, %11, %14, 0;\n\t"
-                "mad.lo.cc.u32   %3, %10, %13, %3;\n\t"
-                "madc.hi.cc.u32   %4, %8, %15, %4;\n\t"
-                "madc.hi.cc.u32   %5, %9, %15, %5;\n\t"
-                "madc.hi.cc.u32   %6, %10, %15, %6;\n\t"
-                "madc.hi.u32   %7, %11, %15, 0;\n\t"
-                "mad.lo.cc.u32   %3, %9, %14, %3;\n\t"
-                "madc.lo.cc.u32   %4, %11, %13, %4;\n\t"
-                "madc.lo.cc.u32   %5, %11, %14, %5;\n\t"
-                "madc.lo.cc.u32   %6, %11, %15, %6;\n\t"
-                "addc.cc.u32   %7, %7, 0;\n\t"
-                "mad.lo.cc.u32   %3, %8, %15, %3;\n\t"
-                "madc.lo.cc.u32   %4, %10, %14, %4;\n\t"
-                "madc.lo.cc.u32   %5, %10, %15, %5;\n\t"
-                "addc.cc.u32   %6, %6, 0;\n\t"
-                "addc.cc.u32   %7, %7, 0;\n\t"
-                "mad.lo.cc.u32   %4, %9, %15, %4;\n\t"
-                : "=r"(w.n[0]), "=r"(w.n[1]), "=r"(w.n[2]), "=r"(w.n[3]),
-                    "=r"(w.n[4]), "=r"(w.n[5]), "=r"(w.n[6]), "=r"(w.n[7])
-                : "r"(lhs.n[0]), "r"(lhs.n[1]), "r"(lhs.n[2]), "r"(lhs.n[3]),
-                    "r"(rhs.n[0]), "r"(rhs.n[1]), "r"(rhs.n[2]), "r"(rhs.n[3]));
-    return w;	
-}
-
 //the following two samples of optimized asm multiplication code is taken from:
 //https://devtalk.nvidia.com/default/topic/1017754/long-integer-multiplication-mul-wide-u64-and-mul-wide-u128/
 
 
 // multiply two unsigned 128-bit integers into an unsigned 256-bit product
-DEVICE_FUNC inline uint256_g mul_uint128_to_256_asm_ver2(const uint128_g& a, const uint128_g& b)
+DEVICE_FUNC uint256_g mul_uint128_to_256_asm_ver1(const uint128_g& a, const uint128_g& b)
 {
     uint256_g res;
     asm ("{\n\t"
@@ -170,7 +94,7 @@ DEVICE_FUNC inline uint256_g mul_uint128_to_256_asm_ver2(const uint128_g& a, con
 //NB: I do not have enough CUDA capabilities to benchmark this implementation!
 
 #if (__CUDA_ARCH__ >= 500)
-DEVICE_FUNC inline uint256_g mul_uint128_to_256_asm_ver3(const uint128_g& a, const uint128_g& b)
+DEVICE_FUNC inline uint256_g mul_uint128_to_256_asm_ver2(const uint128_g& a, const uint128_g& b)
 {
     uint256_g res;
     asm ("{\n\t"
@@ -350,8 +274,4 @@ DEVICE_FUNC inline uint256_g mul_uint128_to_256_asm_ver3(const uint128_g& a, con
 
     return res;
 }
-#endif
-
-#define FASTEST_128_to_256_mul(a, b) mul_uint128_to_256_asm_ver1(a, b)
-
 #endif

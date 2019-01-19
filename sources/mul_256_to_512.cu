@@ -1,9 +1,6 @@
-#ifndef MUL_256_to_512_CUH
-#define MUL_256_to_512_CUH
+#include "cuda_structs.h"
 
-#include "mul_128_to_256.cuh"
-
-DEVICE_FUNC inline uint512_g mul_uint256_to_512_naive(const uint256_g& u, const uint256_g& v)
+DEVICE_FUNC uint512_g mul_uint256_to_512_naive(const uint256_g& u, const uint256_g& v)
 {
     uint512_g w;
     #pragma unroll
@@ -33,7 +30,7 @@ DEVICE_FUNC inline uint512_g mul_uint256_to_512_naive(const uint256_g& u, const 
     return w;	
 }
 
-DEVICE_FUNC inline uint512_g mul_uint256_to_512_asm(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC uint512_g mul_uint256_to_512_asm(const uint256_g& lhs, const uint256_g& rhs)
 {
     uint512_g w;
 		
@@ -205,7 +202,7 @@ DEVICE_FUNC inline uint512_g mul_uint256_to_512_asm(const uint256_g& lhs, const 
     return w;	
 }
 
-DEVICE_FUNC inline uint512_g mul_uint256_to_512_asm_with_allocation(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC uint512_g mul_uint256_to_512_asm_with_allocation(const uint256_g& lhs, const uint256_g& rhs)
 {
     uint512_g w;
 		
@@ -393,15 +390,13 @@ DEVICE_FUNC inline uint512_g mul_uint256_to_512_asm_with_allocation(const uint25
     return w;	
 }
 
-
-
 //the same logic as multiplication 128 x 128 -> 256
 //but we consider limbs as 64 bit
 
 //NB: https://devblogs.nvidia.com/mixed-precision-programming-cuda-8/
 //There are intersting considerations on 16 bit registers. May be we should use them?
 
-DEVICE_FUNC inline uint512_g mul_uint256_to_512_asm_longregs(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC uint512_g mul_uint256_to_512_asm_longregs(const uint256_g& lhs, const uint256_g& rhs)
 {
     uint512_g w;
     asm (".reg .u64 r0, r1, r2, r3, r4, r5, r6, r7;\n\t"
@@ -472,49 +467,92 @@ DEVICE_FUNC inline uint512_g mul_uint256_to_512_asm_longregs(const uint256_g& lh
 //let v = v1 + v2 * 2^n
 //result = (u1 * v1) + 2^n * ((u1 + u2)(v1 + v2) - (u1 * v1) - (u2 * v2))  + 2^(2n) u2 * v2;
 //hence we require more space and addition operations bu only 3 multiplications (instead of four)
-//TBD: later
 
-/*DEVICE_FUNC inline uint512_g mul_uint256_to_512_Karatsuba(const uint256_g& u, const uint256_g& v)
+DEVICE_FUNC uint512_g mul_uint256_to_512_Karatsuba(const uint256_g& u, const uint256_g& v)
 {
-    uint256_g x = FASTEST_128_to_256_mul(u.low, v.low);
-    uint256_g y = FASTEST_128_to_256_mul(u.high, v.high);
+    uint256_g x = MUL_SHORT(u.low, v.low);
+    uint256_g y = MUL_SHORT(u.high, v.high);
     uint128_with_carry_g a = add_uint128_with_carry_asm(u.low, u.high);
     uint128_with_carry_g b = add_uint128_with_carry_asm(v.low, v.high);
-    uint256_g c = FASTEST_128_to_256_mul(a.val, b.val);
+    uint256_g c = MUL_SHORT(a.val, b.val);
 
     uint512_g res;
 
-     asm (  ".reg .u32 aa0, aa1, aa2, aa3, bb0, bb1, bb2, bb3;\n\t"
-            ".reg .u32 r0, r1, r2, r3, r4, r5, r6, r7;\n\t"
-            ".reg .u32 s0, s1, s2, s3, s4, s5, s6, s7;\n\t"
-            ".reg .u32 t0, t1, t2, t3, t4, t5, t6, t7;\n\t"
-            ".reg .u16 a0, a1, a2, a3, a4, a5, a6, a7;\n\t"
-            ".reg .u16 b0, b1, b2, b3, b4, b5, b6, b7;\n\t"
-            "mov.u32  %0, %16;\n\t"
-            "mov.u32  %1, %17;\n\t"
-            "mov.u32  %2, %18;\n\t"
-            "mov.u32  %3, %19;\n\t"
+     asm (  ".reg .pred p;\n\t"
+            ".reg .u32 r4, r5, r6, r7, r8, r9, r10, r11;\n\t"
+            ".reg .u32 r12, r13, r14, r15;\n\t"
+            "mov.b64  %0, {%8, %9};\n\t"
+            "mov.b64  %1, {%10, %11};\n\t"  
+            
+            "add.cc.u32  r4, %12, %16;\n\t"
+            "addc.cc.u32 r5, %13, %17;\n\t"
+            "addc.cc.u32 r6, %14, %18;\n\t"
+            "addc.cc.u32 r7, %15, %19;\n\t"
 
-            "add.cc.u32      %0, %5,  %9;\n\t"
-         	 	"addc.cc.u32     %1, %6,  %10;\n\t"
-         	 	"addc.cc.u32     %2, %7,  %11;\n\t"
-         		"addc.cc.u32     %3, %8,  %12;\n\t"
-                "addc.u32        %4, 0, 0;\n\t"
+            "addc.cc.u32 r8, %20, %24;\n\t"
+            "addc.cc.u32 r9, %21, %25;\n\t"
+            "addc.cc.u32 r10, %22, %26;\n\t"
+            "addc.cc.u32 r11, %23, %27;\n\t"
+            "addc.u32  r12, 0, 0;\n\t"
 
-            : "=r"(res.n[0]), "=r"(res.n[1]),"=r"(res.n[2]), "=r"(res.n[3]),
-            "=r"(res.n[4]), "=r"(res.n[5]), "=r"(res.n[6]), "=r"(res.n[7]),
-            "=r"(res.n[8]), "=r"(res.n[9]), "=r"(res.n[10]), "=r"(res.n[11]),
-            "=r"(res.n[12]), "=r"(res.n[13]), "=r"(res.n[14]), "=r"(res.n[15])
+            "sub.cc.u32  r4, r4, %8;\n\t"
+            "subc.cc.u32 r5, r5, %9;\n\t"
+            "subc.cc.u32 r6, r6, %10;\n\t"
+            "subc.cc.u32 r7, r7, %11;\n\t"
+            "subc.cc.u32 r8, r8, %12;\n\t"
+            "subc.cc.u32 r9, r9, %13;\n\t"
+            "subc.cc.u32 r10, r10, %14;\n\t"
+            "subc.cc.u32 r11, r11, %15;\n\t"
+            "subc.u32  r12, r12, 0;\n\t"
+
+            "sub.cc.u32  r4, r4, %24;\n\t"
+            "subc.cc.u32 r5, r5, %25;\n\t"
+            "subc.cc.u32 r6, r6, %26;\n\t"
+            "subc.cc.u32 r7, r7, %27;\n\t"
+            "subc.cc.u32 r8, r8, %28;\n\t"
+            "subc.cc.u32 r9, r9, %29;\n\t"
+            "subc.cc.u32 r10, r10, %30;\n\t"
+            "subc.cc.u32 r11, r11, %31;\n\t"
+            "subc.u32  r12, r12, 0;\n\t"
+
+            "setp.eq.u32 p, %41, 0;\n\t"
+            "@p  bra $label1; \n\t" 
+            "addc.cc.u32 r8, r8, %32;\n\t"
+            "addc.cc.u32 r9, r9, %33;\n\t"
+            "addc.cc.u32 r10, r10, %34;\n\t"
+            "addc.cc.u32 r11, r11, %35;\n\t"
+            "addc.u32 r12, r12, 0;\n\t"
+
+            "$label1:\n\t"
+            "setp.eq.u32 p, %36, 0;\n\t"
+            "@p  bra $label2; \n\t" 
+            "addc.cc.u32 r8, r8, %37;\n\t"
+            "addc.cc.u32 r9, r9, %38;\n\t"
+            "addc.cc.u32 r10, r10, %39;\n\t"
+            "addc.cc.u32 r11, r11, %40;\n\t"
+            "addc.u32 r12, r12, 0;\n\t"
+
+            "$label2:\n\t"
+            "add.cc.u32  r12, r12, %28;\n\t"
+            "addc.cc.u32  r13, 0, %29;\n\t"
+            "addc.cc.u32  r14, 0, %30;\n\t"
+            "addc.u32  r15, 0, %31;\n\t"
+
+            "mov.b64         %2, {r4,r5};\n\t"  
+            "mov.b64         %3, {r6,r7};\n\t"
+            "mov.b64         %4, {r8,r9};\n\t"  
+            "mov.b64         %5, {r10,r11};\n\t"
+            "mov.b64         %6, {r12,r13};\n\t"  
+            "mov.b64         %7, {r14,r15};\n\t"
+         	 	
+            : "=l"(res.nn[0]), "=l"(res.nn[1]),"=l"(res.nn[2]), "=l"(res.nn[3]),
+            "=l"(res.nn[4]), "=l"(res.nn[5]),"=l"(res.nn[6]), "=l"(res.nn[7])
             : "r"(x.n[0]), "r"(x.n[1]), "r"(x.n[2]), "r"(x.n[3]), "r"(x.n[4]), "r"(x.n[5]), "r"(x.n[6]), "r"(x.n[7]),
+            "r"(c.n[0]), "r"(c.n[1]), "r"(c.n[2]), "r"(c.n[3]), "r"(c.n[4]), "r"(c.n[5]), "r"(c.n[6]), "r"(c.n[7]),
             "r"(y.n[0]), "r"(y.n[1]), "r"(y.n[2]), "r"(y.n[3]), "r"(y.n[4]), "r"(y.n[5]), "r"(y.n[6]), "r"(y.n[7]),
-            "r"(a.val.n[0]), "r"(a.val.n[1]), "r"(a.val.n[2]), "r"(a.val.n[3]),
-            "r"(b.val.n[0]), "r"(b.val.n[1]), "r"(b.val.n[2]), "r"(b.val.n[3]),
-            "r"(c.n[0]), "r"(c.n[1]), "r"(c.n[2]), "r"(c.n[3]), "r"(c.n[4]), "r"(c.n[5]), "r"(c.n[6]), "r"(c.n[7]), "r"(c.n[8]),
-            "r"(a.carry), "r"(b.carry));
-	
+            "r"(a.val.n[0]), "r"(a.val.n[1]), "r"(a.val.n[2]), "r"(a.val.n[3]), "r"(a.carry),
+            "r"(b.val.n[0]), "r"(b.val.n[1]), "r"(b.val.n[2]), "r"(b.val.n[3]), "r"(b.carry));
+        	
     return res;	
-}*/
+}
 
-#define FASTEST_256_to_512_mul(a, b) mul_uint256_to_512_asm(a, b)
-
-#endif

@@ -1,12 +1,9 @@
-#ifndef SQUARE_256_to_512_CUH
-#define SQUARE_256_to_512_CUH
-
-#include "mul_128_to_256.cuh"
+#include "cuda_structs.h"
 
 //we use (The Yang–Hseih–Laih Algorithm) described in 
 //https://www.sciencedirect.com/science/article/pii/S0898122109000509
 
-DEVICE_FUNC inline uint512_g square_uint256_to_512_naive(const uint256_g& u)
+DEVICE_FUNC uint512_g square_uint256_to_512_naive(const uint256_g& u)
 {
     uint512_g w;
     #pragma unroll
@@ -61,7 +58,7 @@ DEVICE_FUNC inline uint512_g square_uint256_to_512_naive(const uint256_g& u)
     return w;	
 }
 
-DEVICE_FUNC inline uint512_g square_uint256_to_512_asm(const uint256_g& u)
+DEVICE_FUNC uint512_g square_uint256_to_512_asm(const uint256_g& u)
 {
     uint512_g w;
 
@@ -149,8 +146,7 @@ DEVICE_FUNC inline uint512_g square_uint256_to_512_asm(const uint256_g& u)
             "shf.l.clamp.b32 r4, r3, r4, 1;\n\t"
             "shf.l.clamp.b32 r3, r2, r3, 1;\n\t"
             "shf.l.clamp.b32 r2, r1, r2, 1;\n\t"
-            "shf.l.clamp.b32 r1, r0, r1, 1;\n\t"
-            "shl.b32 r0, r0, 1;\n\t"
+            "shl.b32 r1, r1, 1;\n\t"
 #else
             "shr.b32 r15, r14, 31;\n\t"
             "shl.b32 r14, r14, 1;\n\t"
@@ -193,12 +189,9 @@ DEVICE_FUNC inline uint512_g square_uint256_to_512_asm(const uint256_g& u)
             "shr.b32 temp, r1, 31;\n\t"
             "or.b32 r2, r2, temp;\n\t"
             "shl.b32 r1, r1, 1;\n\t"
-            "shr.b32 temp, r0, 31;\n\t"
-            "or.b32 r1, r1, temp;\n\t"
-            "shl.b32 r0, r0, 1;\n\t"
 #endif
             //final multiplication
-            "mad.lo.cc.u32 r0, a0, a0, r0;\n\t"
+            "mad.lo.cc.u32 r0, a0, a0, 0;\n\t"
             "madc.hi.cc.u32 r1, a0, a0, r1;\n\t"
             "madc.lo.cc.u32 r2, a1, a1, r2;\n\t"
             "madc.hi.cc.u32 r3, a1, a1, r3;\n\t"
@@ -229,6 +222,3 @@ DEVICE_FUNC inline uint512_g square_uint256_to_512_asm(const uint256_g& u)
 
     return w;
 }
-
-
-#endif

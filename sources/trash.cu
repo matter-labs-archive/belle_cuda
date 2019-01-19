@@ -901,3 +901,724 @@ int main(int argc, char* argv [])
 "addc.cc.u32   %5, %5, 0;\n\t"
 "addc.cc.u32   %6, %6, 0;\n\t"
 "addc.cc.u32   %7, %7, 0;\n\t"
+
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <semaphore.h> 
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+
+#define SEM_NAME "/qwerty"
+#define SEM_SET 0
+#define BUF_LEN 2048
+#define TEST_LEN 10
+
+#define SAGE_DIR
+#define SAGE_EXECUTABLE
+
+
+
+
+int main(int argc, char* argv[])
+{
+    if (argc < 2)
+    {
+        printf("Usage: correctness_test port");
+    }
+
+    long port = strtol(argv[1], NULL, 10);
+    
+    sem_t* sem = sem_open(SEM_NAME, O_CREAT | O_EXCL, 0700, SEM_SET);
+    if (sem == SEM_FAILED)
+    {
+        perror("semaphore");
+        exit(1);
+    }
+
+    if (fork())
+    {
+        //create socket server
+        int sock, listener;
+        struct sockaddr_in addr;
+        char buf[BUF_LEN];
+        int bytes_read;
+
+        listener = socket(AF_INET, SOCK_STREAM, 0);
+        if(listener < 0)
+        {
+            perror("socket");
+            exit(2);
+        }
+    
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(port);
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        if(bind(listener, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+        {
+            perror("bind");
+            exit(3);
+        }
+
+        listen(listener, 1);
+
+        //everything is ready: release mutex
+        sem_post(sem);
+    
+        sock = accept(listener, NULL, NULL);
+        if(sock < 0)
+        {
+            perror("accept");
+            exit(4);
+        }
+
+        //addition test!
+        bytes_read = recv(sock, buf, BUF_LEN, 0);
+        for (size_t i = 0; i < TEST_LEN; i++)
+        {
+
+        }
+                if(bytes_read <= 0) break;
+                send(sock, buf, bytes_read, 0);
+            }
+    
+            close(sock);
+        }
+    } 
+    else
+    {
+        sem_wait(sem);
+        //here we execute sage
+        execl("/bin/sh", "sh", "-c", command, (char *) 0);
+    }
+}
+
+#ifndef ELL_POINT_CUH
+#define ELL_POINT_CUH
+
+#include "mont_mul.cuh"
+
+//Again we initialize global variables with BN_256 specific values
+// A = 0, B = 3, G = [1, 2, 1]
+
+DEVICE_VAR CONST_MEMORY uint256_g A_g = {
+    0, 0, 0, 0, 0, 0, 0, 0
+};
+
+
+DEVICE_VAR CONST_MEMORY uint256_g B_g = R3_g;
+
+struct ec_point
+{
+    uint256_g x;
+    uint256_g y;
+    uint256_g z;
+};
+
+DEVICE_VAR CONST_MEMORY ec_point G = {R_g, R2_g, R_g}
+
+
+
+
+//Implementation of these routines doesn't depend on whether we consider prokective or jacobian coordinates
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+DEVICE_FUNC inline bool is_infinity(const ec_point& point)
+{	
+	return is_zero(point.z);
+}
+
+DEVICE_FUNC inline ec_point point_at_infty()
+{
+    ec_point pt;
+	
+	//TD: may be we should use asm and xor here)
+	#pragma unroll
+    for (int32_t i = 0 ; i < N; i++)
+    {
+        pt.x.n[i] = 0;
+    }
+    pt.y.n[0] = 1;
+	#pragma unroll
+    for (int32_t  i= 1 ; i < N; i++)
+    {
+        pt.y.n[i] = 0;
+    }
+	#pragma unroll
+    for (int32_t i = 0 ; i < N; i++)
+    {
+        pt.z.n[i] = 0;
+    }
+
+	return pt;
+}
+
+DEVICE_FUNC inline uint256_g FIELD_ADD(const uint256_g& a, const uint256_g& b)
+{
+	uint256_g w = ADD(a, b);
+	if (CMP(w, modulus_g) >= 0)
+		return SUB(w, modulus_g);
+	return w;
+}
+
+DEVICE_FUNC inline uint256_g FIELD_SUB(const uint256_g& a, const uint256_g& b)
+{
+	if (CMP(a, b) > 0)
+		return SUB(a, b);
+	else
+	{
+		uint256_g t = ADD(a, modulus_g);
+		return SUB(t, b);
+	}
+}
+
+DEVICE_FUNC inline uint256_g FIELD_INV(const uint256_g& elem)
+{
+	if (!is_zero(elem))
+		return SUB(modulus_g, elem);
+	else
+		return elem;
+}
+
+DEVICE_FUNC inline ec_point INV(const ec_point& pt)
+{
+	ec_point res{pt.x, FIELD_INV(pt.y), pt.z};
+}
+
+//Arithmetic in projective coordinates (Jacobian coordinates should be faster and we are going to check it!)
+//TODO: we may also use BN specific optimizations (for example use, that a = 0)
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+DEVICE_FUNC inline ec_point double_point_proj(const ec_point& pt)
+{
+	if (is_zero(pt.y))
+		return point_at_infty();
+	else
+	{
+		uint256_g temp, temp2;
+		uint256_g W, S, B, H, S2;
+		ec_point res;
+
+#ifdef BN256_SPECIFIC_OPTIMIZATION
+		temp = MONT_SQUARE(pt.x);
+		W = MONT_MUL(temp, R3_g);
+#else
+		temp = MONT_SQUARE(pt.x);
+		temp = MONT_MUL(temp, R3_g);
+		temp2 = MONT_SQUARE(pt.z);
+		temp2 = MONT_MUL(temp2, A_g);
+		W = FIELD_ADD(temp, temp2);
+#endif
+		S = MONT_MUL(pt.y, pt.z);
+		temp = MONT_MUL(pt.x, pt.y);
+		B = MONT_MUL(temp, S);
+
+		temp = MONT_SQUARE(W);
+		temp2 = MONT_MUL(R8_g, B);
+		H = FIELD_SUB(temp, temp2);
+
+		temp = MONT_MUL(R2_g, H);
+		res.x = MONT_MUL(temp, S);
+		
+		//NB: here result is also equal to one of the operands and hence may be reused!!!
+		//NB: this is in fact another possibility for optimization!
+		S2 = MONT_SQUARE(S);
+		temp = MONT_MUL(R4_g, B);
+		temp = FIELD_SUB(temp, H);
+		temp = MONT_MUL(W, temp);
+		
+		temp2 = MONT_SQUARE(pt.y);
+		temp2 = MONT_MUL(R8_g, temp2);
+		temp2 = MONT_MUL(temp2, S2);
+		res.y = FIELD_SUB(temp, temp2);
+
+		temp = MONT_MUL(R8_g, S);
+		res.z = MONT_MUL(temp, S2);
+
+		return res;
+	}
+}
+
+//for debug purposes only: check if point is indeed on curve
+DEVICE_FUNC inline bool check_if_on_curve_proj(const ec_point& pt)
+{
+	//y^{2} * z = x^{3} + A *x * z^{2} + B * z^{3}
+	uint256_g temp1, temp2, z2; 
+	z2 = MONT_SQUARE(pt.z);
+	temp1 = MONT_SQUARE(pt.x);
+	temp1 = MONT_MUL(temp1, pt.x);
+	temp2 = MONT_MUL(A_g, pt.x);
+	temp2 = MONT_MUL(temp2, z2);
+	temp1 = FIELD_ADD(temp1, temp2);
+	temp2 = MONT_MUL(B_g, pt.z);
+	temp2 = MONT_MUL(temp2, z2);
+	temp1 = FIELD_ADD(temp1, temp2);
+	temp2 = MONT_SQUARE(pt.y);
+	temp2 = MONT_MUL(temp2, pt.z);
+
+	return EQUAL(temp1, temp2);
+}
+
+DEVICE_FUNC inline bool equal_proj(const ec_point& pt1, const ec_point& pt2)
+{
+	//check all of the following equations:
+	//X_1 * Y_2 = Y_1 * X_2;
+	//X_1 * Z_2 =  X_2 * Y_1;
+	//Y_1 * Z_2 = Z_1 * Y_2;
+	
+	uint256_g temp1, temp2;
+
+	temp1 = MONT_MUL(pt1.x, pt2.y);
+	temp2 = MONT_MUL(pt1.y, pt2.x);
+	bool first_check = EQUAL(temp1, temp2);
+
+	temp1 = MONT_MUL(pt1.y, pt2.z);
+	temp2 = MONT_MUL(pt1.z, pt2.y);
+	bool second_check = EQUAL(temp1, temp2);
+	
+	temp1 = MONT_MUL(pt1.x, pt2.z);
+	temp2 = MONT_MUL(pt1.z, pt2.x);
+	bool third_check = EQUAL(temp1, temp2);
+			
+	return (first_check && second_check && third_check);
+}
+
+DEVICE_FUNC inline ec_point add_proj(const ec_point& left, const ec_point& right)
+{
+	if (is_infinity(left))
+		return right;
+	if (is_infinity(right))
+		return left;
+
+	uint256_g U1, U2, V1, V2;
+	U1 = MONT_MUL(left.z, right.y);
+	U2 = MONT_MUL(left.y, right.z);
+	V1 = MONT_MUL(left.z, right.x);
+	V2 = MONT_MUL(left.x, right.z);
+
+	ec_point res;
+
+	if (EQUAL(V1, V2))
+	{
+		if (!EQUAL(U1, U2))
+			return point_at_infty();
+		else
+			return  double_point_proj(left);
+	}
+
+	uint256_g U = FIELD_SUB(U1, U2);
+	uint256_g V = FIELD_SUB(V1, V2);
+	uint256_g W = MONT_MUL(left.z, right.z);
+	uint256_g Vsq = MONT_SQUARE(V);
+	uint256_g Vcube = MONT_MUL(Vsq, V);
+
+	uint256_g temp1, temp2;
+	temp1 = MONT_SQUARE(U);
+	temp1 = MONT_MUL(temp1, W);
+	temp1 = FIELD_SUB(temp1, Vcube);
+	temp2 = MONT_MUL(R2_g, Vsq);
+	temp2 = MONT_MUL(Vsq, V2);
+	uint256_g A = FIELD_SUB(temp1, temp2);
+	res.x = MONT_MUL(V, A);
+
+	temp1 = MONT_MUL(Vsq, V2);
+	temp1 = FIELD_SUB(temp1, A);
+	temp1 = MONT_MUL(U, temp1);
+	temp2 = MONT_MUL(Vcube, U2);
+	res.y = FIELD_SUB(temp1, temp2);
+
+	res.z = MONT_MUL(Vcube, W);
+	return res;
+}
+
+DEVICE_FUNC inline ec_point sub_proj(const ec_point& left, const ec_point& right)
+{
+	return add_proj(left, INV(right));
+}
+
+//Arithmetic in Jacobian coordinates (Jacobian coordinates should be faster and we are going to check it!)
+//TODO: we may also use BN specific optimizations (for example use, that a = 0)
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+DEVICE_FUNC inline ec_point double_point_jac(const ec_point& pt)
+{
+	if (is_zero(pt.y))
+		return point_at_infty();
+	else
+	{
+		uint256_g temp1, temp2;
+		temp1 = MONT_MUL(R4_g, pt.x);
+		uint256_g Ysq = MONT_SQUARE(pt.y);
+		uint256_g S = MONT_MUL(temp1, Ysq);
+
+		temp1 = MONT_SQUARE(pt.x);
+		temp1 = MONT_MUL(R3_g, temp1);
+		temp2 = MONT_SQUARE(pt.z);
+		temp2 = MONT_SQUARE(temp2);
+		uint256_g M = FIELD_ADD(temp1, temp2);
+
+		temp1 = MONT_SQUARE(M);
+		temp2 = MONT_MUL(R2_g, S);
+		uint256_g res_x = FIELD_SUB(temp1, temp2);
+		
+		temp1 = FIELD_SUB(S, res_x);
+		temp1 = MONT_MUL(M, temp1);
+		temp2 = MONT_SQUARE(Ysq);
+		temp2 = MONT_MUL(R8_g, temp2);
+		uint256_g res_y = FIELD_SUB(temp1, temp2);
+
+		temp1 = MONT_MUL(R2_g, pt.y);
+		uint256_g res_z = MONT_MUL(temp1, pt.z);
+
+		return ec_point{res_x, res_y, res_z};
+	}
+}
+
+DEVICE_FUNC inline bool check_if_on_curve_jac(const ec_point& pt)
+{
+	//y^4 = x^3 + a  x z^4 +b z^6
+	uint256_g temp1 = MONT_SQUARE(pt.y);
+	uint256_g lefthandside = MONT_SQUARE(temp1);
+
+	uint256_g Zsq = MONT_SQUARE(pt.z);
+	uint256_g Z4 = MONT_SQUARE(Zsq);
+
+	temp1 = MONT_SQUARE(pt.x);
+	uint256_g righthandside = MONT_MUL(temp1, pt.x);
+	temp1 = MONT_MUL(A_g, pt.x);
+	temp1 = MONT_MUL(temp1, Z4);
+	righthandside = FIELD_ADD(righthandside, temp1);
+	temp1 = MONT_MUL(B_g, Zsq);
+	temp1 = MONT_MUL(temp1, Z4);
+	righthandside = FIELD_ADD(righthandside, temp1);
+}
+
+DEVICE_FUNC inline bool equal_jac(const ec_point& pt1, const ec_point& pt2)
+{
+	if (is_infinity(pt1) ^ is_infinity(pt2))
+		return false;
+	if (is_infinity(pt1) & is_infinity(pt2))
+		return true;
+
+	//now both points are not points at infinity.
+
+	uint256_g Z1sq = MONT_SQUARE(pt1.z);
+	uint256_g Z2sq = MONT_SQUARE(pt2.z);
+
+	uint256_g temp1 = MONT_MUL(pt1.x, Z2sq);
+	uint256_g temp2 = MONT_MUL(pt2.x, Z1sq);
+	bool first_check = EQUAL(temp1, temp2);
+
+	temp1 = MONT_MUL(pt1.y, Z2sq);
+	temp1 = MONT_MUL(temp1, pt2.z);
+	temp2 = MONT_MUL(pt2.y, Z1sq);
+	temp2 = MONT_MUL(temp2, pt2.z);
+	bool second_check = EQUAL(temp1, temp2);
+
+	return (first_check && second_check);
+}
+
+DEVICE_FUNC inline ec_point add_jac(const ec_point& left, const ec_point& right)
+{
+	if (is_infinity(left))
+		return right;
+	if (is_infinity(right))
+		return left;
+
+	uint256_g U1, U2;
+
+	uint256_g Z2sq = MONT_SQUARE(right.z);
+	U1 = MONT_MUL(left.x, Z2sq);
+
+	uint256_g Z1sq = MONT_SQUARE(left.z);
+	U2 = MONT_MUL(right.x, Z1sq);
+
+	uint256_g S1 = MONT_MUL(left.y, Z2sq);
+	S1 = MONT_MUL(S1, right.z);
+
+	uint256_g S2 = MONT_MUL(right.y, Z1sq);
+	S2 = MONT_MUL(S2, left.z);
+
+	if (EQUAL(U1, U2))
+	{
+		if (!EQUAL(S1, S2))
+			return point_at_infty();
+		else
+			return  double_point_proj(left);
+	}
+
+	uint256_g H = FIELD_SUB(U2, U1);
+	uint256_g R = FIELD_SUB(S2, S1);
+	uint256_g Hsq = MONT_SQUARE(H);
+	uint256_g Hcube = MONT_MUL(Hsq, H);
+	uint256_g T = MONT_MUL(U1, Hsq);
+
+	uint256_g res_x = MONT_SQUARE(R);
+	res_x = FIELD_SUB(res_x, Hcube);
+	uint256_g temp = MONT_MUL(R2_g, T);
+	res_x = FIELD_SUB(res_x, temp);
+
+	uint256_g res_y = FIELD_SUB(T, res_x);
+	res_y = MONT_MUL(R, res_y);
+	temp = MONT_MUL(S1, Hcube);
+
+	uint256_g res_z = MONT_MUL(H, left.z);
+	res_z = MONT_MUL(res_z, right.z);
+
+	return ec_point{res_x, res_y, res_z};
+}
+
+DEVICE_FUNC inline ec_point sub_jac(const ec_point& left, const ec_point& right)
+{
+	return add_jac(left, INV(right));
+}
+
+#ifdef PROJ_COORDINATES
+#define EC_ADD(x, y) add_proj(x, y)
+#define EC_SUB(x, y) sub_proj(x, y)
+#define EC_DOUBLE(x) double_point_proj(x)
+#define IS_ON_CURVE(x) check_if_on_curve_proj(x)
+#else
+#define EC_ADD(x, y) add_jac(x, y)
+#define EC_SUB(x, y) sub_jac(x, y)
+#define EC_DOUBLE(x) double_point_jac(x)
+#define IS_ON_CURVE(x) check_if_on_curve_jac(x)
+#endif
+
+#endif
+
+p = 21888242871839275222246405745257275088696311157297823662689037894645226208583
+r = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+
+base_field = GF(p)
+curve = EllipticCurve(GF(p), [0, 3]);
+G = curve(1, 2, 1)
+
+R = field(2 ^ 256)
+
+/*#ifdef PROJ_COORDINATES
+#define EC_ADD(x, y) add_proj(x, y)
+#define EC_SUB(x, y) sub_proj(x, y)
+#define EC_DOUBLE(x) double_point_proj(x)
+#define IS_ON_CURVE(x) check_if_on_curve_proj(x)
+#else
+#define EC_ADD(x, y) add_jac(x, y)
+#define EC_SUB(x, y) sub_jac(x, y)
+#define EC_DOUBLE(x) double_point_jac(x)
+#define IS_ON_CURVE(x) check_if_on_curve_jac(x)
+#endif*/
+
+
+#define GENERAL_TEST(func_name) \
+__global__ void func_name##_kernel(uint256_g* a_arr, uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)\
+{\
+	size_t tid = threadIdx.x + blockIdx.x * blockDim.x;\
+	while (tid < arr_len)\
+	{\
+		c_arr[tid] = func_name(a_arr[tid], b_arr[tid]);\
+		tid += blockDim.x * gridDim.x;\
+	}\
+}\
+\
+void func_name##_driver(uint256_g* a_arr, uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)\
+{\
+	func_name##_kernel<<<4096, 248>>>(a_arr, b_arr, c_arr, arr_len);\
+}
+
+
+#define MUL_TEST(func_name) \
+__global__ void func_name##_kernel(uint256_g* a_arr, uint256_g* b_arr, uint512_g* c_arr, size_t arr_len)\
+{\
+	size_t tid = threadIdx.x + blockIdx.x * blockDim.x;\
+	while (tid < arr_len)\
+	{\
+		c_arr[tid] = func_name(a_arr[tid], b_arr[tid]);\
+		tid += blockDim.x * gridDim.x;\
+	}\
+}\
+\
+void func_name##_driver(uint256_g* a_arr, uint256_g* b_arr, uint512_g* c_arr, size_t arr_len)\
+{\
+	func_name##_kernel<<<4096, 248>>>(a_arr, b_arr, c_arr, arr_len);\
+}
+
+#define SQUARE_TEST(func_name) \
+__global__ void func_name##_kernel(uint256_g* a_arr, uint256_g* b_arr, uint512_g* c_arr, size_t arr_len)\
+{\
+	size_t tid = threadIdx.x + blockIdx.x * blockDim.x;\
+	while (tid < arr_len)\
+	{\
+		c_arr[tid] = func_name(a_arr[tid]);\
+		tid += blockDim.x * gridDim.x;\
+	}\
+}\
+\
+void func_name##_driver(uint256_g* a_arr, uint256_g* b_arr, uint512_g* c_arr, size_t arr_len)\
+{\
+	func_name##_kernel<<<4096, 248>>>(a_arr, b_arr, c_arr, arr_len);\
+}
+
+#define ECC_TEST(func_name) \
+__global__ void func_name##_kernel(ec_point* a_arr, ec_point* b_arr, ec_point* c_arr, size_t arr_len)\
+{\
+	size_t tid = threadIdx.x + blockIdx.x * blockDim.x;\
+	while (tid < arr_len)\
+	{\
+		c_arr[tid] = func_name(a_arr[tid], b_arr[tid]);\
+		tid += blockDim.x * gridDim.x;\
+	}\
+}\
+\
+void func_name##_driver(ecc_point* a_arr, ecc_point* b_arr, ecc_point* c_arr, size_t arr_len)\
+{\
+	func_name##_kernel<<<4096, 248>>>(a_arr, b_arr, c_arr, arr_len);\
+}
+
+#define ECC_DOUBLE_TEST(func_name) \
+__global__ void func_name##_kernel(ec_point* a_arr, ec_point* b_arr, ec_point* c_arr, size_t arr_len)\
+{\
+	size_t tid = threadIdx.x + blockIdx.x * blockDim.x;\
+	while (tid < arr_len)\
+	{\
+		c_arr[tid] = func_name(a_arr[tid]);\
+		tid += blockDim.x * gridDim.x;\
+	}\
+}\
+\
+void func_name##_driver(ecc_point* a_arr, ecc_point* b_arr, ecc_point* c_arr, size_t arr_len)\
+{\
+	func_name##_kernel<<<4096, 248>>>(a_arr, b_arr, c_arr, arr_len);\
+}
+
+
+using mul_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint512_g>;
+using general_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint256_g>;
+using ell_point_func_vec_t = kernel_func_vec_t<ec_point, ec_point, ec_point>;
+
+GENERAL_TEST(add_uint256_naive)
+GENERAL_TEST(add_uint256_asm)
+
+general_func_vec_t addition_bench = {
+    {"naive approach", add_uint256_naive_driver},
+	{"asm", add_uint256_asm_driver}
+};
+
+GENERAL_TEST(sub_uint256_naive)
+GENERAL_TEST(sub_uint256_asm)
+
+general_func_vec_t substraction_bench = {
+    {"naive approach", sub_uint256_naive_driver},
+	{"asm", sub_uint256_asm_driver}
+};
+
+MUL_TEST(mul_uint256_to_512_asm)
+MUL_TEST(mul_uint256_to_512_naive)
+MUL_TEST(mul_uint256_to_512_asm_with_allocation)
+MUL_TEST(mul_uint256_to_512_asm_longregs)
+MUL_TEST(mul_uint256_to_512_Karatsuba)
+
+mul_func_vec_t mul_bench = {
+    {"naive approach", mul_uint256_to_512_naive_driver},
+	{"asm", mul_uint256_to_512_asm_driver},
+	{"asm with register alloc", mul_uint256_to_512_asm_with_allocation_driver},
+	{"asm with longregs", mul_uint256_to_512_asm_longregs_driver},
+    {"Karatsuba", mul_uint256_to_512_Karatsuba_driver}
+};
+
+SQUARE_TEST(square_uint256_to_512_naive)
+SQUARE_TEST(square_uint256_to_512_asm)
+
+
+
+
+#include "benchmark.cuh"
+#include "func_lists.cuh"
+
+#include <stdio.h>
+#include <time.h>
+
+
+GENERAL_TEST_1_ARG_1_TYPE(ECC_DOUBLE_PROJ, ec_point);
+
+
+size_t bench_len = 0x3;
+
+int main(int argc, char* argv[])
+{
+	
+	//long ltime = time (NULL);
+    //unsigned int stime = (unsigned int) ltime/2;
+    //srand(stime);
+    
+    //gpu_benchmark(mul_bench, bench_len);
+	
+	//gpu_benchmark(square_bench, bench_len);
+	
+	//gpu_benchmark(mont_mul_bench, bench_len);
+    return 0;
+}
+
+mul_func_vec_t square_bench = {
+    {"naive approach", square_uint256_to_512_naive_driver},
+	{"asm", square_uint256_to_512_asm_driver},
+};
+
+
+GENERAL_TEST(mont_mul_256_naive_SOS)
+GENERAL_TEST(mont_mul_256_naive_CIOS)
+GENERAL_TEST(mont_mul_256_asm_SOS)
+GENERAL_TEST(mont_mul_256_asm_CIOS)
+
+general_func_vec_t mont_mul_bench = {
+    {"naive SOS", mont_mul_256_naive_SOS_driver},
+	{"asm SOS", mont_mul_256_asm_SOS_driver},
+	{"naive CIOS", mont_mul_256_naive_CIOS_driver},
+	{"asm CIOS", mont_mul_256_asm_CIOS_driver}
+};
+
+
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+#include <stdint.h>
+#include <iostream>
+#include <iomanip>
+#include <vector>
+
+
+
+std::ostream& operator<<(std::ostream& os, const uint256_g num)
+{
+    os << "0x";
+    for (int i = 7; i >= 0; i--)
+    {
+        os << std::setfill('0') << std::hex << std::setw(8) << num.n[i];
+    }
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const uint512_g num)
+{
+    os << "0x";
+    for (int i = 15; i >= 0; i--)
+    {
+        os << std::setfill('0') << std::hex << std::setw(8) << num.n[i];
+    }
+    return os;
+}
+
+
+
+

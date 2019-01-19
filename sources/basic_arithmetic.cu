@@ -1,7 +1,4 @@
-#ifndef BASIC_ARITHM_CUH
-#define BASIC_ARITHM_CUH
-
-#include "cuda_structs.cuh"
+#include "cuda_structs.h"
 
 //128 bit addition & substraction:
 //------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -15,7 +12,7 @@
 //HOW TO GET VALUE OF CARRY FLAG!
 //NO WAY! VERY DUMB STUPID NVIDIA PTX ASSEMBLY!
 
-DEVICE_FUNC inline uint128_with_carry_g add_uint128_with_carry_asm(const uint128_g& lhs, const uint128_g& rhs)
+DEVICE_FUNC uint128_with_carry_g add_uint128_with_carry_asm(const uint128_g& lhs, const uint128_g& rhs)
 {
     uint128_with_carry_g result;
 		asm (	"add.cc.u32      %0, %5,  %9;\n\t"
@@ -31,7 +28,7 @@ DEVICE_FUNC inline uint128_with_carry_g add_uint128_with_carry_asm(const uint128
 }
 
 
-DEVICE_FUNC inline uint128_g sub_uint128_asm(const uint128_g& lhs, const uint128_g& rhs)
+DEVICE_FUNC uint128_g sub_uint128_asm(const uint128_g& lhs, const uint128_g& rhs)
 {
     uint128_g result;
 		asm (	"sub.cc.u32      %0, %4,  %8;\n\t"
@@ -50,7 +47,7 @@ DEVICE_FUNC inline uint128_g sub_uint128_asm(const uint128_g& lhs, const uint128
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 
-DEVICE_FUNC inline uint256_g add_uint256_naive(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC uint256_g add_uint256_naive(const uint256_g& lhs, const uint256_g& rhs)
 {
     uint32_t carry = 0;
     uint256_g result;
@@ -63,7 +60,7 @@ DEVICE_FUNC inline uint256_g add_uint256_naive(const uint256_g& lhs, const uint2
     return result;
 }
 
-DEVICE_FUNC inline uint256_g add_uint256_asm(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC uint256_g add_uint256_asm(const uint256_g& lhs, const uint256_g& rhs)
 {
     uint256_g result;
 		asm (	"add.cc.u32      %0, %8,  %16;\n\t"
@@ -84,7 +81,7 @@ DEVICE_FUNC inline uint256_g add_uint256_asm(const uint256_g& lhs, const uint256
     return result;
 }
 
-DEVICE_FUNC inline uint256_g sub_uint256_naive(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC uint256_g sub_uint256_naive(const uint256_g& lhs, const uint256_g& rhs)
 {
     uint32_t borrow = 0;
     uint256_g result;
@@ -109,7 +106,7 @@ DEVICE_FUNC inline uint256_g sub_uint256_naive(const uint256_g& lhs, const uint2
     return result;	
 }
 
-DEVICE_FUNC inline uint256_g sub_uint256_asm(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC uint256_g sub_uint256_asm(const uint256_g& lhs, const uint256_g& rhs)
 {
     uint256_g result;
 
@@ -136,8 +133,7 @@ DEVICE_FUNC inline uint256_g sub_uint256_asm(const uint256_g& lhs, const uint256
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 
-
-DEVICE_FUNC inline int cmp_uint256_naive(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC int cmp_uint256_naive(const uint256_g& lhs, const uint256_g& rhs)
 {
     #pragma unroll
     for (int32_t i = N -1 ; i >= 0; i--)
@@ -153,16 +149,10 @@ DEVICE_FUNC inline int cmp_uint256_naive(const uint256_g& lhs, const uint256_g& 
 DEVICE_FUNC bool is_zero(const uint256_g& x)
 {
     #pragma unroll
-    for (int32_t i = 0 ; i < N; i++)
+    for (int32_t i = N -1 ; i >= 0; i--)
     {
         if (x.n[i] != 0)
             return false;
     }
     return true;
 }
-
-#define FASTEST_256_cmp(a, b) cmp_uint256_naive(a, b)
-#define FASTEST_256_add(a, b) add_uint256_asm(a, b)
-#define FASTEST_256_sub(a, b) sub_uint256_asm(a, b)
-
-#endif
