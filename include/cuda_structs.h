@@ -133,7 +133,7 @@ DEVICE_FUNC bool is_zero(const uint256_g&);
 #define ADD(a, b) add_uint256_asm(a, b)
 #define SUB(a, b) sub_uint256_asm(a, b)
 
-DEVICE_FUNC inline int EQUAL(const uint256_g& lhs, const uint256_g& rhs)
+DEVICE_FUNC inline bool EQUAL(const uint256_g& lhs, const uint256_g& rhs)
 {
     return CMP(lhs, rhs) == 0;
 }

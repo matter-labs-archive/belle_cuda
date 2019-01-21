@@ -290,7 +290,7 @@ ecc_general_func_vec_t add_sub_curve_points_bench = {
     {"addition in projective coordinates", ECC_ADD_PROJ_driver},
 	{"addition in Jacobian coordinates", ECC_ADD_JAC_driver},
 	{"substraction in projective coordinates", ECC_SUB_PROJ_driver},
-	{"addition in Jacobian coordinates", ECC_SUB_JAC_driver}
+	{"substraction in Jacobian coordinates", ECC_SUB_JAC_driver}
 };
 
 void ECC_DOUBLE_PROJ_driver(ec_point*, ec_point*, ec_point*, size_t);
@@ -334,29 +334,29 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 	
-	std::cout << "addition benchmark: " << std::endl;
-	gpu_benchmark(addition_bench, bench_len);
+	// std::cout << "addition benchmark: " << std::endl;
+	// gpu_benchmark(addition_bench, bench_len);
 
-	std::cout << "substraction benchmark: " << std::endl;
-	gpu_benchmark(substraction_bench, bench_len);
+	// std::cout << "substraction benchmark: " << std::endl;
+	// gpu_benchmark(substraction_bench, bench_len);
 
-	std::cout << "multiplication benchmark: " << std::endl;
-	gpu_benchmark(mul_bench, bench_len);
+	// std::cout << "multiplication benchmark: " << std::endl;
+	// gpu_benchmark(mul_bench, bench_len);
 
-	std::cout << "square benchmark: " << std::endl;
-	gpu_benchmark(square_bench, bench_len);
+	// std::cout << "square benchmark: " << std::endl;
+	// gpu_benchmark(square_bench, bench_len);
 
-	std::cout << "montgomery multiplication benchmark: " << std::endl;
-	gpu_benchmark(mont_mul_bench, bench_len);
+	// std::cout << "montgomery multiplication benchmark: " << std::endl;
+	// gpu_benchmark(mont_mul_bench, bench_len);
 
-    std::cout << "ECC add-sub benchmark: " << std::endl;
-    gpu_benchmark(add_sub_curve_points_bench, bench_len);
+    // std::cout << "ECC add-sub benchmark: " << std::endl;
+    // gpu_benchmark(add_sub_curve_points_bench, bench_len);
 
-    std::cout << "ECC double benchmark: " << std::endl;
-    gpu_benchmark(double_curve_point_bench, bench_len);
+    // std::cout << "ECC double benchmark: " << std::endl;
+    // gpu_benchmark(double_curve_point_bench, bench_len);
 
     std::cout << "ECC exponentiation benchmark: " << std::endl;
-    gpu_benchmark(add_sub_curve_points_bench, bench_len);
+    gpu_benchmark(exp_curve_point_bench, bench_len);
 
     return 0;
 }

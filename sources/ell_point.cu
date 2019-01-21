@@ -135,7 +135,7 @@ DEVICE_FUNC ec_point ECC_ADD_PROJ(const ec_point& left, const ec_point& right)
 	temp1 = MONT_MUL(temp1, W);
 	temp1 = FIELD_SUB(temp1, Vcube);
 	temp2 = MONT_MUL(BASE_FIELD_R2, Vsq);
-	temp2 = MONT_MUL(Vsq, V2);
+	temp2 = MONT_MUL(temp2, V2);
 	uint256_g A = FIELD_SUB(temp1, temp2);
 	res.x = MONT_MUL(V, A);
 
@@ -160,6 +160,10 @@ DEVICE_FUNC ec_point ECC_SUB_PROJ(const ec_point& left, const ec_point& right)
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 
+//TODO: An alternative repeated doubling routine with costs (4m)M + (4m+2)S for any value a can be derived from the Modified Jacobian doubling routine. 
+// For small values a (say 0 or -3) the costs reduce to (4m-1)M + (4m+2)S, competing nicely with the algorithm showed above.
+
+
 DEVICE_FUNC ec_point ECC_DOUBLE_JAC(const ec_point& pt)
 {
 	if (is_zero(pt.y))
@@ -171,10 +175,13 @@ DEVICE_FUNC ec_point ECC_DOUBLE_JAC(const ec_point& pt)
 		uint256_g Ysq = MONT_SQUARE(pt.y);
 		uint256_g S = MONT_MUL(temp1, Ysq);
 
+//TODO: here we may also use BN-SPECIFIC optimizations, cause A = 0
+
 		temp1 = MONT_SQUARE(pt.x);
 		temp1 = MONT_MUL(BASE_FIELD_R3, temp1);
 		temp2 = MONT_SQUARE(pt.z);
 		temp2 = MONT_SQUARE(temp2);
+		temp2 = MONT_MUL(temp2, CURVE_A_COEFF);
 		uint256_g M = FIELD_ADD(temp1, temp2);
 
 		temp1 = MONT_SQUARE(M);
@@ -283,6 +290,7 @@ DEVICE_FUNC ec_point ECC_ADD_JAC(const ec_point& left, const ec_point& right)
 	uint256_g res_y = FIELD_SUB(T, res_x);
 	res_y = MONT_MUL(R, res_y);
 	temp = MONT_MUL(S1, Hcube);
+	res_y = FIELD_SUB(res_y, temp);
 
 	uint256_g res_z = MONT_MUL(H, left.z);
 	res_z = MONT_MUL(res_z, right.z);
@@ -294,5 +302,7 @@ DEVICE_FUNC ec_point ECC_SUB_JAC(const ec_point& left, const ec_point& right)
 {
 	return ECC_ADD_JAC(left, INV(right));
 }
+
+//TODO: what about mixed addition?
 
 

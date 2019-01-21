@@ -6,7 +6,7 @@ target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES)
 # We need to explicitly state that we need all CUDA files in the 
 # particle library to be built with -dc as the member functions 
 # could be called by other libraries and executables
-set_target_properties(cuda_benches PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+set_target_properties(cuda_benches PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 #Checking all of the routines for correctness
 option(WITH_CORRECTNESS_CHECK "check correctness of all routines" OFF)

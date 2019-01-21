@@ -1621,4 +1621,59 @@ std::ostream& operator<<(std::ostream& os, const uint512_g num)
 
 
 
+//----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+p = 21888242871839275222246405745257275088696311157297823662689037894645226208583
+r = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+
+base_field = GF(p)
+curve = EllipticCurve(GF(p), [0, 3]);
+G = curve(1, 2, 1)
+
+R = base_field(2 ^ 256)
+
+def mont_mul(x, y):
+    return int(base_field(x) * base_field(y) / R)
+
+
+def to_mont_form(x):
+    return (base_field(x) * R)
+
+def from_mont_form(x):
+    return (base_field(x) / R)
+
+
+
+# A = curve(ax1, ay1, az1)
+
+# B = curve(bx1, by1, bz1)
+
+# C = curve(cx1, cy1, cz1)
+
+# # D = curve(ex1, ey1, ez1)
+
+u = from_mont_form(dx1)
+v = from_mont_form(dy1)
+w = from_mont_form(dz1)
+
+C_jac = curve(u / (w^2), v / (w^3))
+
+u = from_mont_form(fx1)
+v = from_mont_form(fy1)
+w = from_mont_form(fz1)
+
+D_jac = curve(u / (w^2), v / (w^3))
+
+# print A + B == C_jac
+# print A - B == D_jac
+# print A - B == D
+
+#B = curve(a / (c^2), b / (c^3))
+
+
+#B = curve(mont_mul(x7, z7), y7, mont_mul(mont_mul(z7, z7), z7))
+
+
+
 
