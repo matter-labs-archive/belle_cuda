@@ -1,5 +1,75 @@
 #include "cuda_structs.h"
-#include "host_funcs.h"
+
+#include <vector>
+#include <string>
+#include <string_view>
+#include <stdexcept>
+
+#include <boost/convert.hpp>
+#include <boost/convert/stream.hpp>
+#include <boost/optional>
+
+#define CATCH_CONFIG_MAIN
+#include "catch.hpp"
+
+static constexpr size_t BYTES_PER_LIMB = 4;
+
+template<typename T>
+T unpack_from_string(const std::string&)
+{
+    static constexpr size_t chars_per_limb = 2 * BYTES_PER_LIMB;
+
+	const size_t str_len = str.size();
+
+    size_t LIMB_COUNT = (std::is_same<T, uint256_g>::value ? 8 : 16);
+
+	assert(str_len <= 2 * bytes_per_limb * LIMB_COUNT);
+
+    T res;
+    for (size_t i = 0; i < LIMB_COUNT; i++)
+        res.n[i] = 0;
+
+	if (str_len == 0)
+		return;
+
+    boost::cnv::cstream ccnv;
+    ccnv(std::hex)(std::skipws);
+
+    size_t i = str_len;
+    limb_index_t limb_index = 0;
+    while (i > 0)
+    {
+        size_t j = (2 * bytes_per_limb > i ? 0 : i - 2 * bytes_per_limb);
+        std::string_view str_view(str.c_str() + j, i - j);
+        i -= (i > 2 * bytes_per_limb ? 2 * bytes_per_limb : i);
+        auto opt_val = boost::convert<uint32_t>(str_view, ccnv);
+        if (opt_val)
+            res.n[limb_index++] = opt_val.get();
+        else
+            throw std::runtime_error("Incorrect conversion");
+    }
+
+    return res;
+}
+
+template<>
+ec_point unpack_from_string<ec_point>(const std::string& str)
+{
+    std::vector<std::string> strings;
+    std::istringstream str_stream(str);
+    std::string s;    
+    while (getline(str_stream, s, ','))
+        strings.push_back(s);
+
+    assert(string.size() == 3);
+
+    ec_point res;
+    res.x = unpack_from_string<uint256_g>(strings[0]);
+    res.y = unpack_from_string<uint256_g>(strings[1]);
+    res.z = unpack_from_string<uint256_g>(strings[2]);
+
+    return res;
+}
 
 template<typename Atype, typename Btype, typename Ctype>
 using kernel_func_ptr = void (*)(Atype*, Btype*, Ctype*, size_t);
@@ -7,97 +77,67 @@ using kernel_func_ptr = void (*)(Atype*, Btype*, Ctype*, size_t);
 template<typename Atype, typename Btype, typename Ctype>
 using kernel_func_vec_t = std::vector<std::pair<const char*, kernel_func_ptr<Atype, Btype, Ctype>>>;
 
-from_arr
-
 template<typename Atype, typename Btype, typename Ctype>
-void test_framework(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench_len)
+bool test_framework(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, Atype* A_host_arr, Btype* B_host_arr, Ctype* C_host_arr 
+    std::vector<Ctype*>& results, const std::vector<std::string>& data, size_t bench_len)
 {
-    Atype* A_host_arr = nullptr;
-    Btype* B_host_arr = nullptr;
-    Ctype* C_host_arr = nullptr;
-
     Atype* A_dev_arr = nullptr;
     Btype* B_dev_arr = nullptr;
     Ctype* C_dev_arr = nullptr;
 
-    auto num_of_kernels = func_vec.size();
-    std::chrono::high_resolution_clock::time_point start, end;   
-    std::int64_t duration;
+    bool is_successful = true;
 
+    auto num_of_kernels = func_vec.size(); 
     cudaError_t cudaStatus;
 
-    //fill in A array
-    A_host_arr = (Atype*)malloc(bench_len * sizeof(Atype));
+    //fill in host arrays
+    size_t data_index = 0;
     for (size_t i = 0; i < bench_len; i++)
     {
-        A_host_arr[i] = get_random_elem<Atype>();
+        A_host_arr[i] = unpack_from_string<Atype>(data[data_index++]);
+        B_host_arr[i] = unpack_from_string<Btype>(data[data_index++]);
+        C_host_arr[i] = unpack_from_string<Btype>(data[data_index++]);
     }
-
-#ifdef PRINT_BENCHES
-    std::cout << "A array:" << std::endl;
-    for (size_t i = 0; i < bench_len; i++)
-    {
-        std::cout << A_host_arr[i] << std::endl;
-    }
-    std::cout << std::endl;
-#endif
-
-    //fill in B array
-    B_host_arr = (Btype*)malloc(bench_len * sizeof(Btype));
-    for (size_t i = 0; i < bench_len; i++)
-    {
-        B_host_arr[i] = get_random_elem<Btype>();
-    }
-
-#ifdef PRINT_BENCHES
-    std::cout << "B array:" << std::endl;
-    for (size_t i = 0; i < bench_len; i++)
-    {
-        std::cout << B_host_arr[i] << std::endl;
-    }
-    std::cout << std::endl;
-#endif
-
-    //allocate C array
-    C_host_arr = (Ctype*)malloc(bench_len * sizeof(Ctype));
- 
+   
     cudaStatus = cudaMalloc(&A_dev_arr, bench_len * sizeof(Atype));
     if (cudaStatus != cudaSuccess)
     {
         fprintf(stderr, "cudaMalloc (A_dev_arr) failed!\n");
-        fprintf(stderr, "%s\n", cudaGetErrorString(cudaStatus));
+        is_successful = false;
         goto Error;
     }
 
     cudaStatus = cudaMalloc(&B_dev_arr, bench_len * sizeof(Btype));
     if (cudaStatus != cudaSuccess)
     {
-        fprintf(stderr, "cudaMalloc (B_dev_arr) failed!");
+        fprintf(stderr, "cudaMalloc (B_dev_arr) failed!\n");
+        is_successful = false;
         goto Error;
     }
 
     cudaStatus = cudaMalloc(&C_dev_arr, bench_len * sizeof(Ctype));
     if (cudaStatus != cudaSuccess)
     {
-        fprintf(stderr, "cudaMalloc (C_dev_arr) failed!");
+        fprintf(stderr, "cudaMalloc (C_dev_arr) failed!\n");
+        is_successful = false;
         goto Error;
     }
 
     cudaStatus = cudaMemcpy(A_dev_arr, A_host_arr, bench_len * sizeof(Atype), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess)
     {
-        fprintf(stderr, "cudaMemcpy (A_arrs) failed!");
+        fprintf(stderr, "cudaMemcpy (A_arrs) failed!\n");
+        is_successful = false;
         goto Error;
     }
 
     cudaStatus = cudaMemcpy(B_dev_arr, B_host_arr, bench_len * sizeof(Btype), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess)
     {
-        fprintf(stderr, "cudaMemcpy (B_arrs) failed!");
+        fprintf(stderr, "cudaMemcpy (B_arrs) failed!\n");
+        is_successful = false;
         goto Error;
     }
-
-     start = std::chrono::high_resolution_clock::now();
 
     //run_kernels!
     //---------------------------------------------------------------------------------------------------------------------------------
@@ -106,7 +146,8 @@ void test_framework(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t benc
         auto f = func_vec[i].second;
         auto message = func_vec[i].first;
 
-        start = std::chrono::high_resolution_clock::now();
+        std::cout << "Launching kernel: "  << message << std::endl;
+
         f(A_dev_arr, B_dev_arr, C_dev_arr, bench_len);
 
         // Check for any errors launching the kernel
@@ -114,6 +155,7 @@ void test_framework(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t benc
         if (cudaStatus != cudaSuccess)
         {
             fprintf(stderr, "kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+            is_successful = false;
             goto Error;
         }
 
@@ -123,28 +165,17 @@ void test_framework(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t benc
         if (cudaStatus != cudaSuccess)
         {
             fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+            is_successful = false;
             goto Error;
         }
 
-        end = std::chrono::high_resolution_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
-        std::cout << "ns total GPU on func " << message <<":   "  << std::dec << duration  << "ns." << std::endl;
-
-        cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, bench_len * sizeof(Ctype), cudaMemcpyDeviceToHost);
+        cudaStatus = cudaMemcpy(results[i], C_dev_arr, bench_len * sizeof(Ctype), cudaMemcpyDeviceToHost);
         if (cudaStatus != cudaSuccess)
         {
             fprintf(stderr, "cudaMemcpy (C_arrs) failed!");
+            is_successful = false;
             goto Error;
         }
-
-#ifdef PRINT_BENCHES
-        std::cout << "C array:" << std::endl;
-        for (size_t i = 0; i < bench_len; i++)
-        {
-            std::cout << C_host_arr[i] << std::endl;
-        }
-        std::cout << std::endl;
-#endif
     }
 
 Error:
@@ -152,12 +183,26 @@ Error:
     cudaFree(B_dev_arr);
     cudaFree(C_dev_arr);
 
-    free(A_host_arr);
-    free(B_host_arr);
-    free(C_host_arr);
+    return is_successful;
 }
 
-using mul_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint512_g>;
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//We require a bunch of comparison functions (they are all implemented in host_funcs.cpp)
+
+bool equal_host(const uint256_g& a, const uint256_g& b);
+bool equal_host(const uint512_g& a, const uint512_g& b);
+bool equal_proj_host(const ec_point& a, const ec_point& b);
+bool equal_jac_host(const ec_point& a, const ec_point& b);
+
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//check addition test
+
 using general_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint256_g>;
 
 void add_uint256_naive_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
@@ -168,127 +213,55 @@ general_func_vec_t addition_bench = {
 	{"asm", add_uint256_asm_driver}
 };
 
-void sub_uint256_naive_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
-void sub_uint256_asm_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
+static constexpr size_t  FIXED_SIZE_ADD_TEST_SIZE = 6;
+static constexpr std::vector<std::string> FIXED_SIZE_ADD_DATA = {};
 
-general_func_vec_t substraction_bench = {
-    {"naive approach", sub_uint256_naive_driver},
-	{"asm", sub_uint256_asm_driver}
-};
-
-void mul_uint256_to_512_naive_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
-void mul_uint256_to_512_asm_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
-void mul_uint256_to_512_asm_with_allocation_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
-void mul_uint256_to_512_asm_longregs_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
-void mul_uint256_to_512_Karatsuba_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
-
-mul_func_vec_t mul_bench = {
-    {"naive approach", mul_uint256_to_512_naive_driver},
-	{"asm", mul_uint256_to_512_asm_driver},
-	{"asm with register alloc", mul_uint256_to_512_asm_with_allocation_driver},
-	{"asm with longregs", mul_uint256_to_512_asm_longregs_driver},
-    {"Karatsuba", mul_uint256_to_512_Karatsuba_driver}
-};
-
-void square_uint256_to_512_naive_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
-void square_uint256_to_512_asm_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
-
-mul_func_vec_t square_bench = {
-    {"naive approach", square_uint256_to_512_naive_driver},
-	{"asm", square_uint256_to_512_asm_driver},
-};
-
-void mont_mul_256_naive_SOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
-void mont_mul_256_asm_SOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
-void mont_mul_256_naive_CIOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
-void mont_mul_256_asm_CIOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
-
-general_func_vec_t mont_mul_bench = {
-    {"naive SOS", mont_mul_256_naive_SOS_driver},
-	{"asm SOS", mont_mul_256_asm_SOS_driver},
-	{"naive CIOS", mont_mul_256_naive_CIOS_driver},
-	{"asm CIOS", mont_mul_256_asm_CIOS_driver}
-};
-
-using ecc_general_func_vec_t = kernel_func_vec_t<ec_point, ec_point, ec_point>;
-using ecc_point_exp_func_vec_t = kernel_func_vec_t<ec_point, uint256_g, ec_point>;
-
-void ECC_ADD_PROJ_driver(ec_point*, ec_point*, ec_point*, size_t);
-void ECC_ADD_JAC_driver(ec_point*, ec_point*, ec_point*, size_t);
-void ECC_SUB_PROJ_driver(ec_point*, ec_point*, ec_point*, size_t);
-void ECC_SUB_JAC_driver(ec_point*, ec_point*, ec_point*, size_t);
-
-ecc_general_func_vec_t add_sub_curve_points_bench = {
-    {"addition in projective coordinates", ECC_ADD_PROJ_driver},
-	{"addition in Jacobian coordinates", ECC_ADD_JAC_driver},
-	{"substraction in projective coordinates", ECC_SUB_PROJ_driver},
-	{"substraction in Jacobian coordinates", ECC_SUB_JAC_driver}
-};
-
-void ECC_DOUBLE_PROJ_driver(ec_point*, ec_point*, ec_point*, size_t);
-void ECC_DOUBLE_JAC_driver(ec_point*, ec_point*, ec_point*, size_t);
-
-ecc_general_func_vec_t double_curve_point_bench = {
-    {"doubling in projective coordinates", ECC_DOUBLE_PROJ_driver},
-    {"doubling in Jacobian coordinates", ECC_DOUBLE_JAC_driver}
-};
-
-void ECC_double_and_add_exp_PROJ_driver(ec_point*, uint256_g*, ec_point*, size_t);
-void ECC_ternary_expansion_exp_PROJ_driver(ec_point*, uint256_g*, ec_point*, size_t);
-void ECC_double_and_add_exp_JAC_driver(ec_point*, uint256_g*, ec_point*, size_t);
-void ECC_ternary_expansion_exp_JAC_driver(ec_point*, uint256_g*, ec_point*, size_t);
-
-ecc_point_exp_func_vec_t exp_curve_point_bench = {
-    {"double and add in projective coordinates", ECC_double_and_add_exp_PROJ_driver},
-    {"exp via ternary expansion in projective coordinates", ECC_ternary_expansion_exp_PROJ_driver},
-    {"double and add in Jacobian coordinates", ECC_double_and_add_exp_JAC_driver},
-    {"exp via ternary expansion in Jacobian coordinates", ECC_ternary_expansion_exp_JAC_driver}
-};
-
-//-------------------------------------------------------------------------------------------------------------------------------------------------
-//-------------------------------------------------------------------------------------------------------------------------------------------------
-//-------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-size_t bench_len = 0x3;
-
-int main(int argc, char* argv[])
+TEST_CASE( "fixed_size addtion" , "[basic]" )
 {
-    long ltime = time (NULL);
-    unsigned int stime = (unsigned int) ltime/2;
-    srand(stime);
+    static constexpr std::vector<std::string> data = FIXED_SIZE_ADD_DATA;
+    static constexpr size_t test_size = FIXED_SIZE_ADD_TEST_SIZE;
+    
+    using A_type = uint256_g;
+    using B_type = uintt256_g;
+    using C_type = uint256_g;
+    auto& func_vec = addition_bench;
 
-    bool result = CUDA_init();
+    auto num_of_kernels = func_vec.size(); 
 
-	if (!result)
-	{
-		printf("error");
-		return -1;
-	}
-	
-	// std::cout << "addition benchmark: " << std::endl;
-	// gpu_benchmark(addition_bench, bench_len);
+    A_type[test_size] a_arr;
+    B_type[test_size] b_arr;
+    C_type[test_size] c_arr;
 
-	// std::cout << "substraction benchmark: " << std::endl;
-	// gpu_benchmark(substraction_bench, bench_len);
+    std::vector<C_type*> results_ptr;
+    std::vector<C_type> results;
+    results.reserve(num_of_kernels * test_size);
 
-	// std::cout << "multiplication benchmark: " << std::endl;
-	// gpu_benchmark(mul_bench, bench_len);
+    for (size_t i = 0; i < num_of_kernels; i++)
+    {
+        result_ptr.push_back(results.data() + i * test_size);
+    }
 
-	// std::cout << "square benchmark: " << std::endl;
-	// gpu_benchmark(square_bench, bench_len);
+    bool flag = test_framework(unc_vec, a_arr, b_arr, c_arr, results, data, test_len);
+    REQUIRE(flag);
 
-	// std::cout << "montgomery multiplication benchmark: " << std::endl;
-	// gpu_benchmark(mont_mul_bench, bench_len);
-
-    // std::cout << "ECC add-sub benchmark: " << std::endl;
-    // gpu_benchmark(add_sub_curve_points_bench, bench_len);
-
-    // std::cout << "ECC double benchmark: " << std::endl;
-    // gpu_benchmark(double_curve_point_bench, bench_len);
-
-    std::cout << "ECC exponentiation benchmark: " << std::endl;
-    gpu_benchmark(exp_curve_point_bench, bench_len);
-
-    return 0;
+    for (size_t i = 0; i < num_of_kernels; i++)
+    {
+        auto message = func_vec[i].first;
+        INFO( "Checking kernel: " << message);
+        
+        bool test_passed = true;
+        for (size_t j=0; j < test_len; j++)
+        {
+            CHECK(equal_host(results[i][j], c_arr[j]));
+        }
+    }
 }
+
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+

@@ -11,8 +11,38 @@
 #include <stdio.h>
 #include <time.h>
 
+#include <iostream>
+#include <iomanip>
+
+std::ostream& operator<<(std::ostream& os, const uint256_g num)
+{
+    os << "0x";
+    for (int i = 7; i >= 0; i--)
+    {
+        os << std::setfill('0') << std::hex << std::setw(8) << num.n[i];
+    }
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const uint512_g num)
+{
+    os << "0x";
+    for (int i = 15; i >= 0; i--)
+    {
+        os << std::setfill('0') << std::hex << std::setw(8) << num.n[i];
+    }
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const ec_point& pt)
+{
+    os << "x = " << pt.x << std::endl;
+    os << "y = " << pt.y << std::endl;
+    os << "z = " << pt.z << std::endl;
+    return os;
+}
+
 //extern function we are going to use
-bool CUDA_init();
 ec_point get_random_point_host();
 
 template<typename T>
@@ -41,34 +71,6 @@ template<>
 ec_point get_random_elem<ec_point>()
 {
     return get_random_point_host();
-}
-
-std::ostream& operator<<(std::ostream& os, const uint256_g num)
-{
-    os << "0x";
-    for (int i = 7; i >= 0; i--)
-    {
-        os << std::setfill('0') << std::hex << std::setw(8) << num.n[i];
-    }
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const uint512_g num)
-{
-    os << "0x";
-    for (int i = 15; i >= 0; i--)
-    {
-        os << std::setfill('0') << std::hex << std::setw(8) << num.n[i];
-    }
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const ec_point& pt)
-{
-    os << "x = " << pt.x << std::endl;
-    os << "y = " << pt.y << std::endl;
-    os << "z = " << pt.z << std::endl;
-    return os;
 }
 
 template<typename Atype, typename Btype, typename Ctype>
@@ -133,35 +135,35 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
     if (cudaStatus != cudaSuccess)
     {
         fprintf(stderr, "cudaMalloc (A_dev_arr) failed!\n");
-        fprintf(stderr, "%s\n", cudaGetErrorString(cudaStatus));
+        //fprintf(stderr, "%s\n", cudaGetErrorString(cudaStatus));
         goto Error;
     }
 
     cudaStatus = cudaMalloc(&B_dev_arr, bench_len * sizeof(Btype));
     if (cudaStatus != cudaSuccess)
     {
-        fprintf(stderr, "cudaMalloc (B_dev_arr) failed!");
+        fprintf(stderr, "cudaMalloc (B_dev_arr) failed!\n");
         goto Error;
     }
 
     cudaStatus = cudaMalloc(&C_dev_arr, bench_len * sizeof(Ctype));
     if (cudaStatus != cudaSuccess)
     {
-        fprintf(stderr, "cudaMalloc (C_dev_arr) failed!");
+        fprintf(stderr, "cudaMalloc (C_dev_arr) failed!\n");
         goto Error;
     }
 
     cudaStatus = cudaMemcpy(A_dev_arr, A_host_arr, bench_len * sizeof(Atype), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess)
     {
-        fprintf(stderr, "cudaMemcpy (A_arrs) failed!");
+        fprintf(stderr, "cudaMemcpy (A_arrs) failed!\n");
         goto Error;
     }
 
     cudaStatus = cudaMemcpy(B_dev_arr, B_host_arr, bench_len * sizeof(Btype), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess)
     {
-        fprintf(stderr, "cudaMemcpy (B_arrs) failed!");
+        fprintf(stderr, "cudaMemcpy (B_arrs) failed!\n");
         goto Error;
     }
 
@@ -173,6 +175,8 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
     {
         auto f = func_vec[i].second;
         auto message = func_vec[i].first;
+
+        std::cout << "Launching kernel: "  << message << std::endl;
 
         start = std::chrono::high_resolution_clock::now();
         f(A_dev_arr, B_dev_arr, C_dev_arr, bench_len);
@@ -196,12 +200,12 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
 
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
-        std::cout << "ns total GPU on func " << message <<":   "  << std::dec << duration  << "ns." << std::endl;
+        std::cout << "ns total GPU: "  << std::dec << duration  << "ns." << std::endl;
 
         cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, bench_len * sizeof(Ctype), cudaMemcpyDeviceToHost);
         if (cudaStatus != cudaSuccess)
         {
-            fprintf(stderr, "cudaMemcpy (C_arrs) failed!");
+            fprintf(stderr, "cudaMemcpy (C_arrs) failed!\n");
             goto Error;
         }
 

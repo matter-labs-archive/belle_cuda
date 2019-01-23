@@ -425,3 +425,65 @@ ec_point get_random_point_host()
     return ec_point{x.get_raw_rep(), y.get_raw_rep(), R};
 }
 
+bool eqaul_host(const uint256_g& a, const uint256_g& b)
+{
+    for (int32_t i = 0 ; i < N; i++)
+    {
+        if (a.n[i] != b.n[i])
+            return false;
+    }
+    return true;
+}
+
+bool eqaul_host(const uint512_g& a, const uint512_g& b)
+{
+    for (int32_t i = 0 ; i < N_DOUBLED; i++)
+    {
+        if (a.n[i] != b.n[i])
+            return false;
+    }
+    return true;
+}
+
+bool equal_proj_host(const ec_point& a, const ec_point& b)
+{
+    auto x1 = Field(a.x);
+    auto y1 = Field(a.y);
+    auto z1 = Field(a.x);
+
+    auto x2 = Field(b.x);
+    auto y2 = Field(b.x);
+    auto z2 = Field(b.x);
+
+    bool first_comp = (x1 * y2 == x2 * y1);
+    bool second_comp = (x1 * z2 == z1 * x2);
+    bool third_comp = (y1 * z2 == z1 * y2);
+
+    return first_comp && second_comp && third_comp;
+}
+
+bool is_infinity_host(const ec_point& point)
+{
+    return is_zero_host(point.z);
+}
+
+bool equal_jac_host(const ec_point& a, const ec_point& b)
+{
+     if (is_infinity_host(a) ^ is_infinity_host(b))
+		return false;
+	if (is_infinity_host(a) & is_infinity_host(b))
+		return true;
+    
+    auto x1 = Field(a.x);
+    auto y1 = Field(a.y);
+    auto z1 = Field(a.x);
+
+    auto x2 = Field(b.x);
+    auto y2 = Field(b.x);
+    auto z2 = Field(b.x);
+
+    bool first_comp = (x1 * z2 * z2 == x2 * z1 * z1);
+    bool second_comp = (y1 * z2 * z2 * z2 == y2 * z1 * z1 * z1);
+
+	return (first_comp && second_comp);
+}

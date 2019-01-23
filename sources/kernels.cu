@@ -1,4 +1,5 @@
 #include "cuda_structs.h"
+#include <iostream>
 
 #define GENERAL_TEST_2_ARGS_3_TYPES(func_name, A_type, B_type, C_type) \
 __global__ void func_name##_kernel(A_type *a_arr, B_type *b_arr, C_type *c_arr, size_t arr_len)\
@@ -13,7 +14,15 @@ __global__ void func_name##_kernel(A_type *a_arr, B_type *b_arr, C_type *c_arr, 
 \
 void func_name##_driver(A_type *a_arr, B_type *b_arr, C_type *c_arr, size_t arr_len)\
 {\
-	func_name##_kernel<<<4096, 248>>>(a_arr, b_arr, c_arr, arr_len);\
+	int blockSize;\
+  	int minGridSize;\
+  	int gridSize;\
+\
+  	cudaOccupancyMaxPotentialBlockSize( &minGridSize, &blockSize, func_name##_kernel, 0, 0);\ 
+  	gridSize = (arr_len + blockSize - 1) / blockSize;\
+\
+	std::cout << "Grid size: " << gridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;\
+	func_name##_kernel<<<gridSize, blockSize>>>(a_arr, b_arr, c_arr, arr_len);\
 }
 
 #define GENERAL_TEST_2_ARGS_2_TYPES(func_name, input_type, output_type) GENERAL_TEST_2_ARGS_3_TYPES(func_name, input_type, input_type, output_type)

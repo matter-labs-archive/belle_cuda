@@ -1,5 +1,5 @@
-#ifndef CUDA_STRUCTS_CUH
-#define CUDA_STRUCTS_CUH
+#ifndef CUDA_STRUCTS_H
+#define CUDA_STRUCTS_H
 
 #include <stdint.h>
 
@@ -78,6 +78,9 @@ struct ec_point
     uint256_g z;
 };
 
+//initialization function
+bool CUDA_init();
+
 
 #ifdef __CUDACC__
 
@@ -113,6 +116,8 @@ extern DEVICE_VAR CONST_MEMORY uint256_g CURVE_A_COEFF;
 extern DEVICE_VAR CONST_MEMORY uint256_g CURVE_B_COEFF;
 // generator G = [1, 2, 1]
 extern DEVICE_VAR CONST_MEMORY  ec_point CURVE_G;
+
+
 
 //device specific functions
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
