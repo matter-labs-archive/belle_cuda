@@ -18,7 +18,7 @@ void func_name##_driver(A_type *a_arr, B_type *b_arr, C_type *c_arr, size_t arr_
   	int minGridSize;\
   	int gridSize;\
 \
-  	cudaOccupancyMaxPotentialBlockSize( &minGridSize, &blockSize, func_name##_kernel, 0, 0);\ 
+  	cudaOccupancyMaxPotentialBlockSize( &minGridSize, &blockSize, func_name##_kernel, 0, 0);\
   	gridSize = (arr_len + blockSize - 1) / blockSize;\
 \
 	std::cout << "Grid size: " << gridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;\

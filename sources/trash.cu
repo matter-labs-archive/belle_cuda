@@ -1677,3 +1677,64 @@ D_jac = curve(u / (w^2), v / (w^3))
 
 
 
+import math
+
+p = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
+field = GF(p)
+
+D = -3
+
+#(Represent 4p as x2 + |D|y2 (modified Cornacchia–Smith)) 
+#Given a prime p > 2 and −4p<D< 0 with D ≡ 0, 1 (mod 4), this algorithm
+#either reports that no solution exists, or returns a solution (x, y).
+
+def Cornacchia_Smith_alg(p, d):
+    #[Test for solvability]
+    if kronecker(d, p) < 1:
+        return False
+    
+    #[Initial square root]
+    x_0 = int(field(d).sqrt())
+    if (x_0 - d) % 2:
+        x_0 = p - x_0
+        
+    #[Initialize Euclid chain]
+    (a, b) = (2 * p, x_0);
+    c = math.floor(2 * math.sqrt(p))
+    
+    #[Euclid chain]
+    while (b > c): 
+        (a, b) = (b, a % b)
+
+    #[Final report]
+    t = 4 * p - b ^ 2;
+    if (t % d != 0):
+        return False
+    y = t / abs(D)
+    if sqrt(y) not in QQ:
+        return False
+
+    return (b, sqrt(y))
+
+#find if n is represented as m * r, where r is a large prime number
+
+def Is_large(n):
+    factors = n.factor()
+    for elem in factors:
+        if len(bin(elem[0])) >= 242:
+            return True
+    return False
+
+
+
+
+while (D > -100):
+    if (Cornacchia_Smith_alg(p, D)):
+        
+        (u, v) = Cornacchia_Smith_alg(p, D)
+        n1 = p + 1 + u
+        n2 = p + 1 - u
+        if Is_large(n1) or Is_large(n2):
+            print D
+    D = D - 1
+print "end" 

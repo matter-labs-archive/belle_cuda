@@ -78,6 +78,12 @@ struct ec_point
     uint256_g z;
 };
 
+struct affine_point
+{
+    uint256_g x;
+    uint256_g y;
+};
+
 //initialization function
 bool CUDA_init();
 
@@ -260,17 +266,21 @@ DEVICE_FUNC bool IS_ON_CURVE_PROJ(const ec_point&);
 DEVICE_FUNC bool EQUAL_PROJ(const ec_point&, const ec_point&);
 DEVICE_FUNC ec_point ECC_ADD_PROJ(const ec_point&, const ec_point&);
 DEVICE_FUNC ec_point ECC_SUB_PROJ(const ec_point&, const ec_point&);
+DEVICE_FUNC ec_point ECC_ADD_MIXED_PROJ(const ec_point&, const affine_point&);
 
 DEVICE_FUNC ec_point ECC_DOUBLE_JAC(const ec_point&);
 DEVICE_FUNC bool IS_ON_CURVE_JAC(const ec_point&);
 DEVICE_FUNC bool EQUAL_JAC(const ec_point&, const ec_point&);
 DEVICE_FUNC ec_point ECC_ADD_JAC(const ec_point&, const ec_point&);
 DEVICE_FUNC ec_point ECC_SUB_JAC(const ec_point&, const ec_point&);
+DEVICE_FUNC ec_point ECC_ADD_MIXED_JAC(const ec_point&, const affine_point&);
 
 DEVICE_FUNC ec_point ECC_double_and_add_exp_PROJ(const ec_point&, const uint256_g&);
 DEVICE_FUNC ec_point ECC_ternary_expansion_exp_PROJ(const ec_point&, const uint256_g&);
 DEVICE_FUNC ec_point ECC_double_and_add_exp_JAC(const ec_point&, const uint256_g&);
 DEVICE_FUNC ec_point ECC_ternary_expansion_exp_JAC(const ec_point&, const uint256_g&);
+DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_PROJ(const affine_point&, const uint256_g&);
+DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_JAC(const affine_point&, const uint256_g&);
 
 #endif
 

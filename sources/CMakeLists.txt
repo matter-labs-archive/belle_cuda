@@ -9,11 +9,12 @@ target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES)
 set_target_properties(cuda_benches PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 #Checking all of the routines for correctness
-option(WITH_CORRECTNESS_CHECK "check correctness of all routines" OFF)
+option(WITH_CORRECTNESS_CHECK "check correctness of all routines" ON)
 
 if (WITH_CORRECTNESS_CHECK)
     # dependencies
-    find_package(PythonLibs 2.6 REQUIRED)
+    add_subdirectory(lib/Catch2)
+target_link_libraries(tests Catch2::Catch2)
 
     # executable
     add_executable(correctness_checks test.cpp)

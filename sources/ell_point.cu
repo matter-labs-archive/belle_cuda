@@ -154,6 +154,49 @@ DEVICE_FUNC ec_point ECC_SUB_PROJ(const ec_point& left, const ec_point& right)
 	return ECC_ADD_PROJ(left, INV(right));
 }
 
+DEVICE_FUNC ec_point ECC_ADD_MIXED_PROJ(const ec_point& left, const affine_point& right)
+{
+	if (is_infinity(left))
+		return ec_point{right.x, right.y, BASE_FIELD_R};
+
+	uint256_g U1, V1;
+	U1 = MONT_MUL(left.z, right.y);
+	V1 = MONT_MUL(left.z, right.x);
+
+	ec_point res;
+
+	if (EQUAL(V1, left.x))
+	{
+		if (!EQUAL(U1, left.y))
+			return point_at_infty();
+		else
+			return  ECC_DOUBLE_PROJ(left);
+	}
+
+	uint256_g U = FIELD_SUB(U1, left.y);
+	uint256_g V = FIELD_SUB(V1, left.x);
+	uint256_g Vsq = MONT_SQUARE(V);
+	uint256_g Vcube = MONT_MUL(Vsq, V);
+
+	uint256_g temp1, temp2;
+	temp1 = MONT_SQUARE(U);
+	temp1 = MONT_MUL(temp1, left.z);
+	temp1 = FIELD_SUB(temp1, Vcube);
+	temp2 = MONT_MUL(BASE_FIELD_R2, Vsq);
+	temp2 = MONT_MUL(temp2, left.x);
+	uint256_g A = FIELD_SUB(temp1, temp2);
+	res.x = MONT_MUL(V, A);
+
+	temp1 = MONT_MUL(Vsq, left.x);
+	temp1 = FIELD_SUB(temp1, A);
+	temp1 = MONT_MUL(U, temp1);
+	temp2 = MONT_MUL(Vcube, left.y);
+	res.y = FIELD_SUB(temp1, temp2);
+
+	res.z = MONT_MUL(Vcube, left.z);
+	return res;
+}
+
 // Arithmetic in Jacobian coordinates (Jacobian coordinates should be faster and we are going to check it!)
 // TODO: we may also use BN specific optimizations (for example use, that a = 0)
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -303,6 +346,46 @@ DEVICE_FUNC ec_point ECC_SUB_JAC(const ec_point& left, const ec_point& right)
 	return ECC_ADD_JAC(left, INV(right));
 }
 
-//TODO: what about mixed addition?
+DEVICE_FUNC ec_point ECC_ADD_MIXED_JAC(const ec_point& left, const affine_point& right)
+{
+	if (is_infinity(left))
+		return ec_point{right.x, right.y, BASE_FIELD_R};
 
+	uint256_g U2;
 
+	uint256_g Z1sq = MONT_SQUARE(left.z);
+	U2 = MONT_MUL(right.x, Z1sq);
+	
+	uint256_g S2 = MONT_MUL(right.y, Z1sq);
+	S2 = MONT_MUL(S2, left.z);
+
+	if (EQUAL(left.x, U2))
+	{
+		if (!EQUAL(left.y, S2))
+			return point_at_infty();
+		else
+			return  ECC_DOUBLE_JAC(left);
+	}
+
+	uint256_g H = FIELD_SUB(U2, left.x);
+	uint256_g R = FIELD_SUB(S2, left.y);
+	uint256_g Hsq = MONT_SQUARE(H);
+	uint256_g Hcube = MONT_MUL(Hsq, H);
+	uint256_g T = MONT_MUL(left.x, Hsq);
+
+	uint256_g res_x = MONT_SQUARE(R);
+	res_x = FIELD_SUB(res_x, Hcube);
+	uint256_g temp = MONT_MUL(BASE_FIELD_R2, T);
+	res_x = FIELD_SUB(res_x, temp);
+
+	uint256_g res_y = FIELD_SUB(T, res_x);
+	res_y = MONT_MUL(R, res_y);
+	temp = MONT_MUL(left.y, Hcube);
+	res_y = FIELD_SUB(res_y, temp);
+
+	uint256_g res_z = MONT_MUL(H, left.z);
+
+	return ec_point{res_x, res_y, res_z};
+}
+
+//TODO: what about repeated doubling (m-fold doubling) for Jacobian coordinates?

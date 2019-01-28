@@ -41,7 +41,7 @@ DEVICE_FUNC ec_point ECC_double_and_add_exp##SUFFIX(const ec_point& pt, const ui
 DOUBLE_AND_ADD_EXP(_PROJ)
 DOUBLE_AND_ADD_EXP(_JAC)
 
-//algorthm with ternary expansion
+//algorthm with ternary expansion (TODO: have a look at Pomerance prime numbers book)
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -86,4 +86,27 @@ DEVICE_FUNC ec_point ECC_ternary_expansion_exp##SUFFIX(const ec_point& pt, const
 
 TERNARY_EXPANSION_EXP(_PROJ)
 TERNARY_EXPANSION_EXP(_JAC)
+
+//We are going to use decreaing version of double and add algorithm in order to be able to use mixed addition
+
+#define DOUBLE_AND_ADD_AFFINE_EXP(SUFFIX) \
+DEVICE_FUNC ec_point ECC_double_and_add_affine_exp##SUFFIX(const affine_point& pt, const uint256_g& power)\
+{\
+	ec_point Q = point_at_infty();\
+\
+	for (int i = N_BITLEN - 1; i >= 0; i--)\
+	{\
+		Q = ECC_DOUBLE##SUFFIX(Q);\
+        bool flag = get_bit(power, i);\
+		if (flag)\
+        {\
+            Q = ECC_ADD_MIXED##SUFFIX(Q, pt);\
+        }\
+	}\
+	return Q;\
+}
+
+DOUBLE_AND_ADD_AFFINE_EXP(_PROJ)
+DOUBLE_AND_ADD_AFFINE_EXP(_JAC)
+
 
