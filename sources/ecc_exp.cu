@@ -110,3 +110,23 @@ DOUBLE_AND_ADD_AFFINE_EXP(_PROJ)
 DOUBLE_AND_ADD_AFFINE_EXP(_JAC)
 
 
+//Wnaf methods
+
+#define WNAF_EXP(SUFFIX) a
+
+DEVICE_FUNC ec_point ECC_WNAF_exp_proj(const affine_point& pt, const uint256_g& power, uint32_t window_size)
+{
+	ec_point Q = point_at_infty();
+
+	for (int i = N_BITLEN - 1; i >= 0; i--)
+	{
+		Q = ECC_DOUBLE##SUFFIX(Q);
+        bool flag = get_bit(power, i);
+		if (flag)
+        {
+            Q = ECC_ADD_MIXED##SUFFIX(Q, pt);
+        }
+	}
+	return Q;
+}
+

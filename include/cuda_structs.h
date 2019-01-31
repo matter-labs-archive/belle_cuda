@@ -18,8 +18,10 @@
 #define N 8
 #define N_DOUBLED 16
 #define N_BITLEN 254
+#define R_LOG 256
 
 #define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
+#define SET_BIT(var,pos) ((var) |= (1<<(pos)))
 
 struct uint64_g
 {
@@ -84,6 +86,25 @@ struct affine_point
     uint256_g y;
 };
 
+//miscellaneous helpful staff
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+DEVICE_FUNC inline bool get_bit(const uint256_g& x, size_t index)
+{
+	auto num = x.n[index / 32];
+	auto pos = index % 32;
+	return CHECK_BIT(num, pos);
+}
+
+DEVICE_FUNC inline void set_bit(uint256_g& x, size_t index)
+{
+	auto& num = x.n[index / 32];
+	auto pos = index % 32;
+	return SET_BIT(num, pos);
+}
+
 //initialization function
 bool CUDA_init();
 
@@ -138,11 +159,18 @@ DEVICE_FUNC uint256_g add_uint256_asm(const uint256_g&, const uint256_g&);
 DEVICE_FUNC uint256_g sub_uint256_naive(const uint256_g&, const uint256_g&);
 DEVICE_FUNC uint256_g sub_uint256_asm(const uint256_g&, const uint256_g&);
 DEVICE_FUNC int cmp_uint256_naive(const uint256_g&, const uint256_g&);
+
 DEVICE_FUNC bool is_zero(const uint256_g&);
+DEVICE_FUNC bool is_even(const uint256_g&);
+
+DEVICE_FUNC uint256_g shift_right_asm(const uint256_g&, uint8_t);
+DEVICE_FUNC uint256_g shift_left_asm(const uint256_g&, uint8_t);
 
 #define CMP(a, b) cmp_uint256_naive(a, b)
 #define ADD(a, b) add_uint256_asm(a, b)
 #define SUB(a, b) sub_uint256_asm(a, b)
+#define SHIFT_LEFT(a, b) shift_left_asm(a, b)
+#define SHIFT_RIGHT(a, b) shift_right_asm(a, b)
 
 DEVICE_FUNC inline bool EQUAL(const uint256_g& lhs, const uint256_g& rhs)
 {
@@ -194,6 +222,11 @@ DEVICE_FUNC uint256_g mont_mul_256_asm_CIOS(const uint256_g&, const uint256_g&);
 #define MONT_SQUARE(a) mont_mul_256_asm_SOS(a, a)
 #define MONT_MUL(a,b) mont_mul_256_asm_CIOS(a, b)
 
+DEVICE_FUNC uint256_g FIELD_ADD(const uint256_g&, const uint256_g&);
+DEVICE_FUNC uint256_g FIELD_SUB(const uint256_g&, const uint256_g&);
+DEVICE_FUNC uint256_g FIELD_ADD_INV(const uint256_g&);
+DEVICE_FUNC uint256_g FIELD_MUL_INV(const uint256_g&);
+
 //Implementation of these routines doesn't depend on whether we consider prokective or jacobian coordinates
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -229,36 +262,9 @@ DEVICE_FUNC inline ec_point point_at_infty()
 	return pt;
 }
 
-DEVICE_FUNC inline uint256_g FIELD_INV(const uint256_g& elem)
-{
-    if (!is_zero(elem))
-		return SUB(BASE_FIELD_P, elem);
-	else
-		return elem;
-}
-
-DEVICE_FUNC inline uint256_g FIELD_ADD(const uint256_g& a, const uint256_g& b )
-{
-    uint256_g w = ADD(a, b);
-	if (CMP(w, BASE_FIELD_P) >= 0)
-		return SUB(w, BASE_FIELD_P);
-	return w;
-}
-
-DEVICE_FUNC inline uint256_g FIELD_SUB(const uint256_g& a, const uint256_g& b)
-{
-    if (CMP(a, b) > 0)
-		return SUB(a, b);
-	else
-	{
-		uint256_g t = ADD(a, BASE_FIELD_P);
-		return SUB(t, b);
-	}
-}
-
 DEVICE_FUNC inline ec_point INV(const ec_point& pt)
 {
-    return {pt.x, FIELD_INV(pt.y), pt.z};
+    return {pt.x, FIELD_ADD_INV(pt.y), pt.z};
 }
 
 DEVICE_FUNC ec_point ECC_DOUBLE_PROJ(const ec_point&);
