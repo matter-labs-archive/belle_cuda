@@ -53,7 +53,7 @@ static DEVICE_FUNC inline stage_one_data stage_one_mul_inv(const uint256_g& elem
 
 	while (!is_zero(V))
 	{
-		If (is_even(U))
+		if (is_even(U))
 		{
 			U = SHIFT_RIGHT(U, 1);
 			S = SHIFT_LEFT(S, 1);
@@ -63,7 +63,7 @@ static DEVICE_FUNC inline stage_one_data stage_one_mul_inv(const uint256_g& elem
 			V = SHIFT_RIGHT(V, 1);
 			R = SHIFT_LEFT(R, 1);
 		}
-		else if (COMP(U, V) > 0)
+		else if (CMP(U, V) > 0)
 		{
 			U = SHIFT_RIGHT(FIELD_SUB(U, V), 1);
 			R = FIELD_ADD(R, S);
@@ -99,4 +99,13 @@ DEVICE_FUNC uint256_g FIELD_MUL_INV(const uint256_g& elem)
 		res = MONT_MUL(res, data.almost_mont_inverse);
 		return MONT_MUL(res, BASE_FIELD_R2);
 	}
+}
+
+//batch inversion - simulaneously (in place) invert all-non zero elements in the array.
+//NB: we assume that all elements in the array are non-zero
+
+
+DEVICE_FUNC void BATCH_FIELD_MUL_INV(uint256_g* vec, size_t vec_size)
+{
+	
 }

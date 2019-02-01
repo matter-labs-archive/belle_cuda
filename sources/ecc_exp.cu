@@ -1,17 +1,5 @@
 #include "cuda_structs.h"
 
-//miscellaneous helpful staff
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-DEVICE_FUNC inline bool get_bit(const uint256_g& x, size_t index)
-{
-	auto num = x.n[index / 32];
-	auto pos = index % 32;
-	return CHECK_BIT(num, pos);
-}
 
 //classical double and add algorithm:
 //------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -87,7 +75,11 @@ DEVICE_FUNC ec_point ECC_ternary_expansion_exp##SUFFIX(const ec_point& pt, const
 TERNARY_EXPANSION_EXP(_PROJ)
 TERNARY_EXPANSION_EXP(_JAC)
 
-//We are going to use decreaing version of double and add algorithm in order to be able to use mixed addition
+
+//Ddecreaing version of double and add algorithm in order to be able to use mixed addition
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
 
 #define DOUBLE_AND_ADD_AFFINE_EXP(SUFFIX) \
 DEVICE_FUNC ec_point ECC_double_and_add_affine_exp##SUFFIX(const affine_point& pt, const uint256_g& power)\
@@ -110,23 +102,103 @@ DOUBLE_AND_ADD_AFFINE_EXP(_PROJ)
 DOUBLE_AND_ADD_AFFINE_EXP(_JAC)
 
 
-//Wnaf methods
+//Wnaf method
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
 
-#define WNAF_EXP(SUFFIX) a
-
-DEVICE_FUNC ec_point ECC_WNAF_exp_proj(const affine_point& pt, const uint256_g& power, uint32_t window_size)
+//TODO: allign this struct in order to require very little amount of space
+struct wnaf_auxiliary_data
 {
-	ec_point Q = point_at_infty();
+    //NB: value is signed!
+    int8_t value;
+    uint8_t gap;
+};
 
-	for (int i = N_BITLEN - 1; i >= 0; i--)
-	{
-		Q = ECC_DOUBLE##SUFFIX(Q);
-        bool flag = get_bit(power, i);
-		if (flag)
+//NB: WINDOW_SIZE should be >= 4
+#define WINDOW_SIZE 4
+#define EXP2(w) (1 << w)
+#define EXP2_MINUS_1(w) (1 << (w - 1))
+
+static constexpr uint32_t PRECOMPUTED_ARRAY_LEN = (1 << (WINDOW_SIZE - 2)) - 2;
+static constexpr uint32_t MAX_WNAF_DATA_ARRAY_LEN = (N_BITLEN / WINDOW_SIZE ) + 1;
+
+//NB: we assume that power is nonzero here
+//returns the number of wnaf_auxiliary_data in form array
+//we also assume that bit-len of w is less than word-size
+
+DEVICE_FUNC static inline uint32_t convert_to_non_adjacent_form(const uint256_g& power, wnaf_auxiliary_data* form)
+{
+    uint32_t elem_count = 0;
+    uint256_g d = power;
+    uint8_t current_gap = 0;
+
+    while (!is_zero(d))
+    {
+        if (is_even(d))
         {
-            Q = ECC_ADD_MIXED##SUFFIX(Q, pt);
+            int8_t val = d.n[0] & EXP2(WINDOW_SIZE);
+            if (val >= EXP2_MINUS_1(WINDOW_SIZE))
+            {
+                val -= EXP2(WINDOW_SIZE);
+                ADD_UINT(d, -val);
+            }
+            else
+            {
+                SUB_UINT(d, val);
+            }
+
+            form[elem_count++] = {val, current_gap};
+            current_gap = WINDOW_SIZE;
+            d = SHIFT_RIGHT(d, WINDOW_SIZE);                     
         }
-	}
-	return Q;
+        else
+        {
+            current_gap++;
+            d = SHIFT_RIGHT(d, 1);   
+        }
+    }
+
+    return elem_count;
 }
+
+//TODO: may be better convert to affine?
+
+DEVICE_FUNC ec_point ECC_wNAF_exp(const ec_point& pt, const uint256_g& power)
+{
+    if (is_zero(power))
+        return point_at_infty();
+
+    //precompute small powers
+
+    ec_point precomputed[PRECOMPUTED_ARRAY_LEN];
+    wnaf_auxiliary_data wnaf_arr[MAX_WNAF_DATA_ARRAY_LEN];
+    
+    ec_point pt_doubled = ECC_DOUBLE_PROJ(pt);
+    precomputed[0] = pt;
+
+    for (uint32_t i = 1; i < PRECOMPUTED_ARRAY_LEN; i++)
+    {
+        precomputed[i] = ECC_ADD_PROJ(precomputed[i-1], pt_doubled);
+    }
+
+    //convert degree to wNAF-form
+    auto count = convert_to_non_adjacent_form(power, wnaf_arr);
+    ec_point Q = point_at_infty();
+    
+    for (int j = count - 1; j >=0 ; j--)
+    {
+        auto& wnaf_data = wnaf_arr[j];
+        if (wnaf_data.value >= 0)
+            Q = ECC_ADD_PROJ(Q, precomputed[(wnaf_data.value - 1)/ 2]);
+        else
+            Q = ECC_SUB_PROJ(Q, precomputed[(-wnaf_data.value - 1)/ 2]);
+        
+        for(uint8_t k = 0; k < wnaf_data.gap; k++)
+            Q = ECC_DOUBLE_PROJ(Q);
+    }
+   
+   return Q;   
+}
+
 

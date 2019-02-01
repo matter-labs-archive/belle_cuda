@@ -91,18 +91,18 @@ struct affine_point
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 
-DEVICE_FUNC inline bool get_bit(const uint256_g& x, size_t index)
+DEVICE_FUNC inline bool get_bit(const uint256_g& x, uint32_t index)
 {
 	auto num = x.n[index / 32];
 	auto pos = index % 32;
 	return CHECK_BIT(num, pos);
 }
 
-DEVICE_FUNC inline void set_bit(uint256_g& x, size_t index)
+DEVICE_FUNC inline void set_bit(uint256_g& x, uint32_t index)
 {
 	auto& num = x.n[index / 32];
 	auto pos = index % 32;
-	return SET_BIT(num, pos);
+	SET_BIT(num, pos);
 }
 
 //initialization function
@@ -160,17 +160,22 @@ DEVICE_FUNC uint256_g sub_uint256_naive(const uint256_g&, const uint256_g&);
 DEVICE_FUNC uint256_g sub_uint256_asm(const uint256_g&, const uint256_g&);
 DEVICE_FUNC int cmp_uint256_naive(const uint256_g&, const uint256_g&);
 
+DEVICE_FUNC void add_uint_uint256_asm(uint256_g&, uint32_t);
+DEVICE_FUNC void sub_uint_uint256_asm(uint256_g&, uint32_t);
+
 DEVICE_FUNC bool is_zero(const uint256_g&);
 DEVICE_FUNC bool is_even(const uint256_g&);
 
-DEVICE_FUNC uint256_g shift_right_asm(const uint256_g&, uint8_t);
-DEVICE_FUNC uint256_g shift_left_asm(const uint256_g&, uint8_t);
+DEVICE_FUNC uint256_g shift_right_asm(const uint256_g&, uint32_t);
+DEVICE_FUNC uint256_g shift_left_asm(const uint256_g&, uint32_t);
 
 #define CMP(a, b) cmp_uint256_naive(a, b)
 #define ADD(a, b) add_uint256_asm(a, b)
 #define SUB(a, b) sub_uint256_asm(a, b)
 #define SHIFT_LEFT(a, b) shift_left_asm(a, b)
 #define SHIFT_RIGHT(a, b) shift_right_asm(a, b)
+#define ADD_UINT(a, b) add_uint_uint256_asm(a, b)
+#define SUB_UINT(a, b) sub_uint_uint256_asm(a, b)
 
 DEVICE_FUNC inline bool EQUAL(const uint256_g& lhs, const uint256_g& rhs)
 {
