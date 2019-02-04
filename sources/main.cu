@@ -253,13 +253,15 @@ void mul_uint256_to_512_asm_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
 void mul_uint256_to_512_asm_with_allocation_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
 void mul_uint256_to_512_asm_longregs_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
 void mul_uint256_to_512_Karatsuba_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
+void mul_uint256_to_512_asm_with_shuffle_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
 
 mul_func_vec_t mul_bench = {
     {"naive approach", mul_uint256_to_512_naive_driver},
 	{"asm", mul_uint256_to_512_asm_driver},
 	{"asm with register alloc", mul_uint256_to_512_asm_with_allocation_driver},
 	{"asm with longregs", mul_uint256_to_512_asm_longregs_driver},
-    {"Karatsuba", mul_uint256_to_512_Karatsuba_driver}
+    {"Karatsuba", mul_uint256_to_512_Karatsuba_driver},
+    {"asm with shuffles", mul_uint256_to_512_asm_with_shuffle_driver}
 };
 
 void square_uint256_to_512_naive_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
@@ -337,6 +339,7 @@ int main(int argc, char* argv[])
 		printf("error");
 		return -1;
 	}
+
 	
 	// std::cout << "addition benchmark: " << std::endl;
 	// gpu_benchmark(addition_bench, bench_len);
@@ -359,8 +362,8 @@ int main(int argc, char* argv[])
     // std::cout << "ECC double benchmark: " << std::endl;
     // gpu_benchmark(double_curve_point_bench, bench_len);
 
-    std::cout << "ECC exponentiation benchmark: " << std::endl;
-    gpu_benchmark(exp_curve_point_bench, bench_len);
+    // std::cout << "ECC exponentiation benchmark: " << std::endl;
+    // gpu_benchmark(exp_curve_point_bench, bench_len);
 
     return 0;
 }

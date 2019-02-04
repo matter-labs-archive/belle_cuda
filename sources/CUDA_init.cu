@@ -27,6 +27,8 @@ bool CUDA_init()
 		return false;
 	}
 
+	printf("Compute possibilities: %d.%d\n", prop.major, prop.minor);
+
 	//TODO: check if there are enough constant memory and other additional checks
 	//set appropriate device
 	// Choose which GPU to run on, change this on a multi-GPU system.

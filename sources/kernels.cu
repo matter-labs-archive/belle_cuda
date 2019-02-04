@@ -57,6 +57,7 @@ GENERAL_TEST_2_ARGS_2_TYPES(mul_uint256_to_512_naive, uint256_g, uint512_g)
 GENERAL_TEST_2_ARGS_2_TYPES(mul_uint256_to_512_asm_with_allocation, uint256_g, uint512_g)
 GENERAL_TEST_2_ARGS_2_TYPES(mul_uint256_to_512_asm_longregs, uint256_g, uint512_g)
 GENERAL_TEST_2_ARGS_2_TYPES(mul_uint256_to_512_Karatsuba, uint256_g, uint512_g)
+GENERAL_TEST_2_ARGS_2_TYPES(mul_uint256_to_512_asm_with_shuffle, uint256_g, uint512_g)
 
 GENERAL_TEST_1_ARG_2_TYPES(square_uint256_to_512_naive, uint256_g, uint512_g)
 GENERAL_TEST_1_ARG_2_TYPES(square_uint256_to_512_asm, uint256_g, uint512_g)

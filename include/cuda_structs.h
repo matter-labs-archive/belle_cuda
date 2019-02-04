@@ -20,6 +20,10 @@
 #define N_BITLEN 254
 #define R_LOG 256
 
+#define USE_PROJECTIVE_COORDINATES
+
+#define WARP_SIZE 32
+
 #define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
 #define SET_BIT(var,pos) ((var) |= (1<<(pos)))
 
@@ -213,6 +217,7 @@ DEVICE_FUNC uint512_g mul_uint256_to_512_asm(const uint256_g&, const uint256_g&)
 DEVICE_FUNC uint512_g mul_uint256_to_512_asm_with_allocation(const uint256_g&, const uint256_g&);
 DEVICE_FUNC uint512_g mul_uint256_to_512_asm_longregs(const uint256_g&, const uint256_g&);
 DEVICE_FUNC uint512_g mul_uint256_to_512_Karatsuba(const uint256_g&, const uint256_g&);
+DEVICE_FUNC uint512_g mul_uint256_to_512_asm_with_shuffle(const uint256_g&, const uint256_g&);
 
 #define MUL(a, b) mul_uint256_to_512_asm_with_allocation(a, b)
 
@@ -292,6 +297,24 @@ DEVICE_FUNC ec_point ECC_double_and_add_exp_JAC(const ec_point&, const uint256_g
 DEVICE_FUNC ec_point ECC_ternary_expansion_exp_JAC(const ec_point&, const uint256_g&);
 DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_PROJ(const affine_point&, const uint256_g&);
 DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_JAC(const affine_point&, const uint256_g&);
+
+#ifdef USE_PROJECTIVE_COORDINATES
+
+#define ECC_ADD(a, b) ECC_ADD_PROJ(a, b)
+#define ECC_SUB(a, b) ECC_SUB_PROJ(a, b)
+#define ECC_DOUBLE(a) ECC_DOUBLE_PROJ(a)
+#define ECC_EXP(p, d) ECC_double_and_add_affine_exp_PROJ(p, d)
+
+#elif defined USE_JACOBIAN_COORDINATES
+
+#define ECC_ADD(a, b) ECC_ADD_JAC(a, b)
+#define ECC_SUB(a, b) ECC_SUB_JAC(a, b)
+#define ECC_DOUBLE(a) ECC_DOUBLE_JAC(a)
+#define ECC_EXP(p, d) ECC_double_and_add_affine_exp_JAC(p, d)
+
+#else
+#error The form of elliptic curve coordinates should be explicitely specified
+#endif
 
 #endif
 
