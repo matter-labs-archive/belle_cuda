@@ -347,8 +347,8 @@ int main(int argc, char* argv[])
 	// std::cout << "substraction benchmark: " << std::endl;
 	// gpu_benchmark(substraction_bench, bench_len);
 
-	// std::cout << "multiplication benchmark: " << std::endl;
-	// gpu_benchmark(mul_bench, bench_len);
+	std::cout << "multiplication benchmark: " << std::endl;
+	gpu_benchmark(mul_bench, bench_len);
 
 	// std::cout << "square benchmark: " << std::endl;
 	// gpu_benchmark(square_bench, bench_len);

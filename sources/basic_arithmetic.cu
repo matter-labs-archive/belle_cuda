@@ -172,6 +172,8 @@ DEVICE_FUNC uint256_g shift_right_asm(const uint256_g& elem, uint32_t shift)
     asm (   ".reg .u32 temp;\n\t"
 #if (__CUDA_ARCH__ < 500)
             ".reg .u32 x, y;\n\t"
+#else
+            ".reg .u32 x;\n\t"
 #endif
             "mov.u32 x, %16;\n\t"
             
@@ -233,6 +235,8 @@ DEVICE_FUNC uint256_g shift_left_asm(const uint256_g& elem, uint32_t shift)
     asm (   ".reg .u32 temp;\n\t"
 #if (__CUDA_ARCH__ < 500)
             ".reg .u32 x, y;\n\t"
+#else
+            ".reg .u32 x;\n\t"
 #endif
             "mov.u32 x, %16;\n\t"
             

@@ -207,7 +207,7 @@ DEVICE_FUNC uint256_g mul_uint128_to_256_naive(const uint128_g&, const uint128_g
 DEVICE_FUNC uint256_g mul_uint128_to_256_asm_ver1(const uint128_g&, const uint128_g&);
 
 #if (__CUDA_ARCH__ >= 500)
-uint256_g mul_uint128_to_256_asm_ver2(const uint128_g&, const uint128_g&);
+DEVICE_FUNC uint256_g mul_uint128_to_256_asm_ver2(const uint128_g&, const uint128_g&);
 #endif
 
 #define MUL_SHORT(a, b) mul_uint128_to_256_asm_ver1(a, b)

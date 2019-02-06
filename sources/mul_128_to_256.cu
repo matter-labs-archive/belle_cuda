@@ -94,7 +94,7 @@ DEVICE_FUNC uint256_g mul_uint128_to_256_asm_ver1(const uint128_g& a, const uint
 //NB: I do not have enough CUDA capabilities to benchmark this implementation!
 
 #if (__CUDA_ARCH__ >= 500)
-DEVICE_FUNC inline uint256_g mul_uint128_to_256_asm_ver2(const uint128_g& a, const uint128_g& b)
+DEVICE_FUNC uint256_g mul_uint128_to_256_asm_ver2(const uint128_g& a, const uint128_g& b)
 {
     uint256_g res;
     asm ("{\n\t"

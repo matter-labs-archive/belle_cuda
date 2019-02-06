@@ -11,7 +11,7 @@ def gen_tables(array_len):
     
     for a in xrange(array_len):
         for b in xrange(array_len):
-            idx = (a + b) / 2
+            idx = int((a + b) / 2)
             if (a + b) % 2 == 0:
                 even_table[idx].append((a, b))
                 even_table_size = even_table_size + 1
@@ -24,80 +24,122 @@ def gen_tables(array_len):
 from collections import namedtuple
 
 #c = a*b + d
-AsmInsn = namedtuple("AsmInsn", "is_even op_type gen_carry use_carry dest_op first_op second_op")
+AsmInsn = namedtuple("AsmInsn", "op_type gen_carry use_carry dest_op first_op second_op")
 op_mul = 0
 op_add = 1
-op_shfl = 2
-op_unknown = 3
+op_unknown = 2
 
-def find_largest_sublist(table, array_len):
-    count = -1
-    indexes = []
-    for j in xrange(array_len):
+
+def find_largest_sublist(table):
+    count = 0
+    index = -1
+    for j in sorted(table):
         if len(table[j]) > count:
             count = len(table[j])
-            indexes = []
-        else if len(table[j]) == count:
-            indexes.append[j]
-    return count, indexes
+            index = j
+    
+    assert index >= 0, "Index should be greater than zero"
+    return index
+
+
+def to_op(index, letter):
+    return letter + str(index)
+
+
+def check_if_in_chain(table, table_size, index):
+    if table_size == 0:
+        return False
+    
+    new_index = find_largest_sublist(table)
+    
+    if (new_index == index + 1):
+        return True
+    elif ((new_index == index + 2) and len(table[index + 1]) > 0):
+        return True
+    else:
+        return False
+
+
+def gen_asm_for_table(table, table_size, array_len, even_flag):
+    
+    AsmListing = []
+    main_reg = "r" if even_flag else "t"
+    temp_reg = "t" if even_flag else "s"
+    
+    for i in xrange(array_len):
+        if (len(table[i]) > 0):
+            (a, b) = table[i][0]
+            table[i].pop(0)
+               
+            insn = AsmInsn(op_mul, False, False, to_op(i, main_reg), to_op(a, "a"), to_op(b, "b"))
+            AsmListing.append(insn)
+            table_size = table_size - 1
+           
+    while(table_size > 0):
+        
+        index = find_largest_sublist(table)
+       
+        (a, b) = table[index][0]
+        table[index].pop(0)
+        table_size = table_size - 1
+            
+        insn = AsmInsn(op_mul, False, False, to_op(index, temp_reg), to_op(a, "a"), to_op(b, "b"))
+        AsmListing.append(insn)
+              
+        start_index = index
+        
+        #append all muls
+        
+        while (check_if_in_chain(table, table_size, index)):
+            index = index + 1
+            (a, b) = table[index][0]
+            table[index].pop(0)
+            table_size = table_size - 1
+            
+            insn = AsmInsn(op_mul, False, False, to_op(index, temp_reg), to_op(a, "a"), to_op(b, "b"))
+            AsmListing.append(insn)
+            
+        #append all additions
+        use_carry = False
+        while (start_index <= index):
+            
+            insn = AsmInsn(op_add, True, use_carry, to_op(start_index, main_reg), to_op(start_index, main_reg), 
+                           to_op(start_index, temp_reg))
+            AsmListing.append(insn)
+            use_carry = True
+            start_index = start_index + 1
+        
+        #NB: this is a small hack
+        
+        if (not even_flag and start_index == array_len - 1):
+            insn = AsmInsn(op_add, False, True, to_op(start_index, main_reg), "0", "0")
+            AsmListing.append(insn)
+        else:
+            insn = AsmInsn(op_add, False, True, to_op(start_index, main_reg), to_op(start_index, main_reg), "0")
+            AsmListing.append(insn)
+        use_carry = False
+    
+    return AsmListing
 
 def gen_asm(array_len):
-    AsmListing = []
-    
     even_table, odd_table, even_table_size, odd_table_size = gen_tables(array_len)
     
-    #do the same procedure - first for even table, than to odd
+    AsmListing = gen_asm_for_table(even_table, even_table_size, array_len, True)
+    AsmListing += gen_asm_for_table(odd_table, odd_table_size, array_len, False)
     
-    for (table in (even_table, odd_table)):
-        is_even = (table == even_table)
-                
-        #fill every register
+    return AsmListing
 
-        for i in xrange(array_len):
-            (a, b) = even_table[i][0]
-            even_table[i].pop(0)
-            insn = AsmListing(is_even, op_mul, False, False, i, a, b)
-            even_table_size = even_table_size - 1
 
-        while(even_table_size > 0):
-            count, indexes = find_largest_sublist(even_table_size, array_len)
-            iter_pos = 0
-            iter_end = len(indexes)
-
-            use_carry = False
-
-            while (iter_pos < iter_end):
-
-            cur_index = indexes[0]
-
-            (a, b) = even_table[cur_index][0]
-            even_table[cur_index].pop(0)
-            insn = AsmListing(op_add, False, False, cur_index, a, b)
-            even_table_size = even_table_size - 1
-
-            if (count > 1)
-        
-    #now generate code for final shifting and adding
-    
-    "shf.l.clamp.b32 s7, t6, t7, 16;\n\t"
-         "shf.l.clamp.b32 s6, t5, t6, 16;\n\t"
-         "shf.l.clamp.b32 s5, t4, t5, 16;\n\t"
-         "shf.l.clamp.b32 s4, t3, t4, 16;\n\t"
-         "shf.l.clamp.b32 s3, t2, t3, 16;\n\t"
-         "shf.l.clamp.b32 s2, t1, t2, 16;\n\t"
-         "shf.l.clamp.b32 s1, t0, t1, 16;\n\t"
-         "shf.l.clamp.b32 s0,  0, t0, 16;\n\t"
- 
-   
-
-def generate_printable_asm(AsmListing, res_reg_name = "r", temp_reg_name1 = "t", temp_reg_name2 = "s"):
+def generate_printable_asm(AsmListing):
     printed_asm = ""
-    ending = "\\n\\t"
+    ending = ";\\n\\t\"\n"
 
     for elem in AsmListing:
-        if (elem.op_type == op_mul):         
-            printed_asm += "\"mul." + high_low + "u32";
-            printed_asm += '   %{:d}, %{:d}, %{:d};\\n\\t\"\n'.format(elem.c, elem.a, elem.b)
+        if (elem.op_type == op_mul):
+            #"mul.wide.u16    s0, a1, b0;\n\t"
+            
+            printed_asm += "\"mul.wide.u16    " 
+            printed_asm += elem.dest_op + ", " + elem.first_op + ", " + elem.second_op + ending
 
         elif (elem.op_type == op_add):
             printed_asm += "\"add"
@@ -106,11 +148,17 @@ def generate_printable_asm(AsmListing, res_reg_name = "r", temp_reg_name1 = "t",
             printed_asm += "."
             if (elem.gen_carry):
                 printed_asm += "cc."
-            printed_asm += "u32" + '   %{:d}, %{:d}, 0;\\n\\t\"\n'.format(elem.c, elem.a)
-        
-        elif (elem.op_type == op_shfl):
-        
+            printed_asm += "u32    "
+            
+            printed_asm += elem.dest_op + ", " + elem.first_op + ", " + elem.second_op + ending
+
         else:
             raise ValueError('Incorrect operand type.')
      
     return printed_asm
+
+   
+ARR_LEN = 16
+AsmListing = gen_asm(ARR_LEN)
+print len(AsmListing)
+print generate_printable_asm(AsmListing)
