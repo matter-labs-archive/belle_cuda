@@ -16,13 +16,15 @@ void func_name##_driver(A_type *a_arr, B_type *b_arr, C_type *c_arr, size_t arr_
 {\
 	int blockSize;\
   	int minGridSize;\
-  	int gridSize;\
+  	int realGridSize;\
+	int optimalGridSize;\
 \
   	cudaOccupancyMaxPotentialBlockSize( &minGridSize, &blockSize, func_name##_kernel, 0, 0);\
-  	gridSize = (arr_len + blockSize - 1) / blockSize;\
+  	realGridSize = (arr_len + blockSize - 1) / blockSize;\
+	optimalGridSize = min(minGridSize, realGridSize);\
 \
-	std::cout << "Grid size: " << gridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;\
-	func_name##_kernel<<<gridSize, blockSize>>>(a_arr, b_arr, c_arr, arr_len);\
+	std::cout << "Grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;\
+	func_name##_kernel<<<optimalGridSize, blockSize>>>(a_arr, b_arr, c_arr, arr_len);\
 }
 
 #define GENERAL_TEST_2_ARGS_2_TYPES(func_name, input_type, output_type) GENERAL_TEST_2_ARGS_3_TYPES(func_name, input_type, input_type, output_type)

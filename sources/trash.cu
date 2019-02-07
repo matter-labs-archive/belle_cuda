@@ -1866,3 +1866,94 @@ addc.cc.u32    t4, t4, s4;\n\t
 addc.cc.u32    t5, t5, s5;\n\t
 addc.cc.u32    t6, t6, s6;\n\t
 addc.u32    t7, 0, 0;\n\t
+
+
+//3) using warp level reduction and recursion
+//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+__global__ void naive_multiexp_kernel_warp_level_recursion(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+{
+    ec_point acc = point_at_infty();
+    
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+	{   
+        ec_point x = ECC_EXP(point_arr[tid], power_arr[tid]);
+        acc = ECC_ADD(acc, x);
+        tid += blockDim.x * gridDim.x;
+	}
+
+    acc = warpReduceSum(acc);
+
+    if ((threadIdx.x & (warpSize - 1)) == 0)
+    {
+        out_arr[blockIdx.x * blockDim.x / WARP_SIZE + threadIdx.x / WARP_SIZE] = acc;
+    }
+}
+
+__global__ void naive_kernel_warp_level_reduction(const ec_point* in_arr, ec_point* out_arr, size_t arr_len)
+{
+    ec_point acc = point_at_infty();
+    
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+    {   
+        acc = ECC_ADD(acc, in_arr[tid]);
+        tid += blockDim.x * gridDim.x;
+	}
+
+    acc = warpReduceSum(acc);
+
+    if ((threadIdx.x & (warpSize - 1)) == 0)
+    {
+        out_arr[blockIdx.x * blockDim.x / WARP_SIZE + threadIdx.x / WARP_SIZE] = acc;
+    }
+}
+
+
+
+void naive_multiexp_warp_level_recursion_driver(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out, size_t arr_len)
+{
+	//stage 1 : exponetiationa and reduction
+    
+    int blockSize1;
+    int minGridSize1;
+  	int realGridSize1;
+	int optimalGridSize1;
+
+  	cudaOccupancyMaxPotentialBlockSize(&minGridSize1, &blockSize1, naive_multiexp_kernel_warp_level_recursion, 0, 0);
+  	realGridSize1 = (arr_len + blockSize1 - 1) / blockSize1;
+	optimalGridSize1 = min(minGridSize1, realGridSize1);
+
+	std::cout << "Grid size1: " << realGridSize1 << ",  min grid size1: " << minGridSize1 << ",  blockSize1: " << blockSize1 << std::endl;
+	naive_multiexp_kernel_warp_level_recursion<<<optimalGridSize1, blockSize1>>>(point_arr, power_arr, out, arr_len);
+
+    //stage 2 : reduction only
+
+    int blockSize2;
+    int minGridSize2;
+  	int realGridSize2;
+	int optimalGridSize2;
+
+    cudaOccupancyMaxPotentialBlockSize(&minGridSize2, &blockSize2, naive_multiexp_kernel_warp_level_recursion, 0, 0);
+  	realGridSize2 = (arr_len + blockSize2 - 1) / blockSize2;
+	optimalGridSize2 = min(minGridSize2, realGridSize2);
+
+    std::cout << "Grid size2: " << realGridSize2 << ",  min grid size2: " << minGridSize2 << ",  blockSize2: " << blockSize2 << std::endl;
+
+    arr_len = optimalGridSize1 * blockSize1 / WARP_SIZE;
+
+    while (arr_len > 1)
+    {
+        if (arr_len <= DEFAUL_NUM_OF_THREADS_PER_BLOCK)
+        {
+            naive_kernel_block_level_reduction<<<1, DEFAUL_NUM_OF_THREADS_PER_BLOCK>>>(out_arr, o)
+        }
+        else
+        {
+            /* code */
+        }        
+    }
+}
+
+

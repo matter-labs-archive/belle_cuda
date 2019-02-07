@@ -74,6 +74,10 @@ def gen_asm_for_table(table, table_size, array_len, even_flag):
             insn = AsmInsn(op_mul, False, False, to_op(i, main_reg), to_op(a, "a"), to_op(b, "b"))
             AsmListing.append(insn)
             table_size = table_size - 1
+            
+    possible_overflow = []
+    for i in xrange(array_len):
+        possible_overflow.append(False)
            
     while(table_size > 0):
         
@@ -105,6 +109,7 @@ def gen_asm_for_table(table, table_size, array_len, even_flag):
             
             insn = AsmInsn(op_add, True, use_carry, to_op(start_index, main_reg), to_op(start_index, main_reg), 
                            to_op(start_index, temp_reg))
+            possible_overflow[start_index] = True
             AsmListing.append(insn)
             use_carry = True
             start_index = start_index + 1
@@ -115,8 +120,15 @@ def gen_asm_for_table(table, table_size, array_len, even_flag):
             insn = AsmInsn(op_add, False, True, to_op(start_index, main_reg), "0", "0")
             AsmListing.append(insn)
         else:
-            insn = AsmInsn(op_add, False, True, to_op(start_index, main_reg), to_op(start_index, main_reg), "0")
-            AsmListing.append(insn)
+            cycle_flag = True
+            while(cycle_flag):
+                gen_carry = (start_index < array_len - 1) and possible_overflow[start_index] 
+                insn = AsmInsn(op_add, gen_carry, True, to_op(start_index, main_reg), to_op(start_index, main_reg), "0")
+                AsmListing.append(insn)
+                
+                cycle_flag = gen_carry
+                start_index = start_index + 1
+                
         use_carry = False
     
     return AsmListing

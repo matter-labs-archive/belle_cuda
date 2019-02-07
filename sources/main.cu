@@ -340,6 +340,8 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
+    std::cout << "Benchmark length: " << bench_len << std::endl;
+
 	
 	// std::cout << "addition benchmark: " << std::endl;
 	// gpu_benchmark(addition_bench, bench_len);
