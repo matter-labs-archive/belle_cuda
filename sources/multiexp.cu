@@ -247,3 +247,8 @@ void naive_multiexp_kernel_block_level_recursion_driver(const affine_point* poin
     naive_kernel_block_level_reduction<<<1, DEFAUL_NUM_OF_THREADS_PER_BLOCK>>>(out_arr, out_arr, optimalGridSize);
 }
 
+//Pipenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
+//---------------------------------------------------------------------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------------------------------------------------------------
+

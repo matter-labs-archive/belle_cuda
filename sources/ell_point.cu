@@ -389,3 +389,81 @@ DEVICE_FUNC ec_point ECC_ADD_MIXED_JAC(const ec_point& left, const affine_point&
 }
 
 //TODO: what about repeated doubling (m-fold doubling) for Jacobian coordinates?
+
+//random number generators
+//---------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------
+
+static DEVICE_FUNC inline uint256_g field_exp(const uint256_g& elem, const uint256_g& power)
+{
+    uint256_g S = elem;
+	uint256_g Q = BASE_FIELD_R;
+
+	for (size_t i = 0; i < N_BITLEN; i++)
+	{
+		bool flag = get_bit(power, i);
+		if (flag)
+        { 
+            Q = MONT_MUL(Q, S);
+        }
+		
+        S = MONT_SQUARE(S); 	
+	}
+	return Q;
+}
+
+//The following algorithm is taken from 1st edition of
+//Jeffrey Hoffstein, Jill Pipher, J.H. Silverman - An introduction to mathematical cryptography
+//Proposition 2.27 on page 84
+
+static DEVICE_FUNC inline optional<uint256_g> field_square_root(const uint256_g& x)
+{
+    uint256_g candidate = field_exp(x, MAGIC_CONSTANT);
+
+    using X = optional<uint256_g>;
+    return (EQUAL(MONT_SQUARE(candidate), x) ? X(candidate) :  X(NONE_OPT));
+}
+
+DEVICE_FUNC void gen_random_elem(affine_point& pt, curandState& state)
+{
+	//consider equation in short Weierstrass form: y^2 = x^3 + a * x + b
+    //generate random x and compute right hand side
+    //if this is not a square - repeat, again and again, until we are successful
+    uint256_g x;
+    optional<uint256_g> y_opt;
+    while (!y_opt)
+    {
+        gen_random_elem(x, state);
+
+		//compute righthandside
+
+		uint256_g righthandside = MONT_SQUARE(x);
+		righthandside = MONT_MUL(righthandside, x);
+
+		uint256_g temp = MONT_MUL(CURVE_A_COEFF, x);
+		righthandside = FIELD_ADD(righthandside, temp);
+		righthandside = FIELD_ADD(righthandside, CURVE_B_COEFF);
+
+        y_opt = field_square_root(righthandside);
+    }
+
+    uint256_g y = y_opt.get_val();
+
+    if (curand(&state) % 2)
+        y = FIELD_ADD_INV(y);
+
+    pt = affine_point{x, y};
+}
+
+DEVICE_FUNC void gen_random_elem(ec_point& pt, curandState& state)
+{
+	affine_point temp;
+	gen_random_elem(temp, state);
+	pt = ec_point{temp.x, temp.y, BASE_FIELD_R};
+
+	//check if generated point is valid
+
+	assert(IS_ON_CURVE(pt));
+}
+

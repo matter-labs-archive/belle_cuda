@@ -42,36 +42,6 @@ std::ostream& operator<<(std::ostream& os, const ec_point& pt)
     return os;
 }
 
-//extern function we are going to use
-ec_point get_random_point_host();
-
-template<typename T>
-T get_random_elem();
-
-template<>
-uint128_g get_random_elem<uint128_g>()
-{
-    uint128_g res;
-    for (uint32_t i =0; i < HALF_N; i++)
-        res.n[i] = rand();
-    return res;
-}
-
-template<>
-uint256_g get_random_elem<uint256_g>()
-{
-    uint256_g res;
-    for (uint32_t i =0; i < N; i++)
-        res.n[i] = rand();
-    res.n[N - 1] &= 0x1fffffff;
-    return res;
-}
-
-template<>
-ec_point get_random_elem<ec_point>()
-{
-    return get_random_point_host();
-}
 
 template<typename Atype, typename Btype, typename Ctype>
 using kernel_func_ptr = void (*)(Atype*, Btype*, Ctype*, size_t);
@@ -90,47 +60,21 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
     Btype* B_dev_arr = nullptr;
     Ctype* C_dev_arr = nullptr;
 
+    curandState *devStates = nullptr;
+
+    int blockSize;
+  	int minGridSize;
+    int realGridSize;
+	int optimalGridSize;
+
     auto num_of_kernels = func_vec.size();
     std::chrono::high_resolution_clock::time_point start, end;   
     std::int64_t duration;
 
     cudaError_t cudaStatus;
 
-    //fill in A array
-    A_host_arr = (Atype*)malloc(bench_len * sizeof(Atype));
-    for (size_t i = 0; i < bench_len; i++)
-    {
-        A_host_arr[i] = get_random_elem<Atype>();
-    }
+    //allocate device arrays
 
-#ifdef PRINT_BENCHES
-    std::cout << "A array:" << std::endl;
-    for (size_t i = 0; i < bench_len; i++)
-    {
-        std::cout << A_host_arr[i] << std::endl;
-    }
-    std::cout << std::endl;
-#endif
-
-    //fill in B array
-    B_host_arr = (Btype*)malloc(bench_len * sizeof(Btype));
-    for (size_t i = 0; i < bench_len; i++)
-    {
-        B_host_arr[i] = get_random_elem<Btype>();
-    }
-
-#ifdef PRINT_BENCHES
-    std::cout << "B array:" << std::endl;
-    for (size_t i = 0; i < bench_len; i++)
-    {
-        std::cout << B_host_arr[i] << std::endl;
-    }
-    std::cout << std::endl;
-#endif
-
-    //allocate C array
-    C_host_arr = (Ctype*)malloc(bench_len * sizeof(Ctype));
- 
     cudaStatus = cudaMalloc(&A_dev_arr, bench_len * sizeof(Atype));
     if (cudaStatus != cudaSuccess)
     {
@@ -153,7 +97,52 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         goto Error;
     }
 
-    cudaStatus = cudaMemcpy(A_dev_arr, A_host_arr, bench_len * sizeof(Atype), cudaMemcpyHostToDevice);
+    //we generate all random variables on the device side - below is the PRNG initialization
+
+  	cudaOccupancyMaxPotentialBlockSize( &minGridSize, &blockSize, gen_random_array_kernel<Atype>, 0, 0);
+  	realGridSize = (bench_len + blockSize - 1) / blockSize;
+	optimalGridSize = min(minGridSize, realGridSize);
+
+
+    cudaStatus = cudaMalloc((void **)&devStates, optimalGridSize * blockSize * sizeof(curandState));
+    if (cudaStatus != cudaSuccess)
+    {
+        fprintf(stderr, "cudaMalloc (devStates) failed!\n");
+        goto Error;
+    }
+
+    //generate ranodm elements in both input arrays
+    for (auto arr : {A_dev_arr, B_dev_arr})
+    {
+        gen_random_array_kernel<<<optimalGridSize, blockSize>>>(arr, bench_len, devStates, rand());
+
+        // Check for any errors launching the kernel
+        cudaStatus = cudaGetLastError();
+        if (cudaStatus != cudaSuccess)
+        {
+            fprintf(stderr, "random elements generator kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+            goto Error;
+        }
+
+        // cudaDeviceSynchronize waits for the kernel to finish, and returns
+        // any errors encountered during the launch.
+        cudaStatus = cudaDeviceSynchronize();
+        if (cudaStatus != cudaSuccess)
+        {
+            fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+            goto Error;
+        }
+    }
+
+#ifdef PRINT_BENCHES
+
+    //copy generated arrays from device to host and print them!
+
+    A_host_arr = (Atype*)malloc(bench_len * sizeof(Atype));
+    B_host_arr = (Btype*)malloc(bench_len * sizeof(Btype));
+    C_host_arr = (Ctype*)malloc(bench_len * sizeof(Ctype));
+
+    cudaStatus = cudaMemcpy(A_host_arr, A_dev_arr, bench_len * sizeof(Atype), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess)
     {
         fprintf(stderr, "cudaMemcpy (A_arrs) failed!\n");
@@ -167,7 +156,21 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         goto Error;
     }
 
-     start = std::chrono::high_resolution_clock::now();
+    std::cout << "A array:" << std::endl;
+    for (size_t i = 0; i < bench_len; i++)
+    {
+        std::cout << A_host_arr[i] << std::endl;
+    }
+    std::cout << std::endl;
+
+    std::cout << "B array:" << std::endl;
+    for (size_t i = 0; i < bench_len; i++)
+    {
+        std::cout << B_host_arr[i] << std::endl;
+    }
+    std::cout << std::endl;
+
+#endif
 
     //run_kernels!
     //---------------------------------------------------------------------------------------------------------------------------------
@@ -202,6 +205,8 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
         std::cout << "ns total GPU: "  << std::dec << duration  << "ns." << std::endl;
 
+#ifdef PRINT_BENCHES
+
         cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, bench_len * sizeof(Ctype), cudaMemcpyDeviceToHost);
         if (cudaStatus != cudaSuccess)
         {
@@ -209,13 +214,13 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
             goto Error;
         }
 
-#ifdef PRINT_BENCHES
         std::cout << "C array:" << std::endl;
         for (size_t i = 0; i < bench_len; i++)
         {
             std::cout << C_host_arr[i] << std::endl;
         }
         std::cout << std::endl;
+
 #endif
     }
 
@@ -224,10 +229,13 @@ Error:
     cudaFree(B_dev_arr);
     cudaFree(C_dev_arr);
 
+    cudaFree(devStates);
+
     free(A_host_arr);
     free(B_host_arr);
     free(C_host_arr);
 }
+
 
 using mul_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint512_g>;
 using general_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint256_g>;

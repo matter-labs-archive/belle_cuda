@@ -2,15 +2,22 @@
 #define CUDA_STRUCTS_H
 
 #include <stdint.h>
+#include <assert.h>
+#include <type_traits>
 
 #ifdef __CUDACC__
 #include <cuda_runtime.h>
+#include <curand_kernel.h>
 #define DEVICE_FUNC __device__
+#define HOST_DEVICE_FUNC __host__ __device__ 
 #define DEVICE_VAR __device__
+#define HOST_DEVICE_VAR __host__ __device__
 #define CONST_MEMORY __constant__
 #else
 #define DEVICE_FUNC
+#define HOST_DEVICE_FUNC
 #define DEVICE_VAR
+#define HOST_DEVICE_VAR
 #define CONST_MEMORY
 #endif
 
@@ -140,6 +147,11 @@ extern DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R3;
 extern DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R4;
 extern DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R8;
 
+//NB: MAGIC_POWER =(P+1)/4 is constant, so we are able to precompute it (it is needed for exponentiation in a finite field)
+//NB: Magic constant should be given in standard form (i.e. NON MONTGOMERY)
+
+extern DEVICE_VAR CONST_MEMORY uint256_g MAGIC_CONSTANT;
+
 //elliptic curve params
 
 //A = 0
@@ -149,6 +161,40 @@ extern DEVICE_VAR CONST_MEMORY uint256_g CURVE_B_COEFF;
 // generator G = [1, 2, 1]
 extern DEVICE_VAR CONST_MEMORY  ec_point CURVE_G;
 
+//a bunch of helpful structs
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//We are not able to compile with C++ 17 standard
+
+struct none_t{};
+extern DEVICE_VAR CONST_MEMORY none_t NONE_OPT;
+
+template<typename T>
+class optional
+{
+private:
+    bool flag_;
+    T val_;
+
+    static_assert(std::is_default_constructible<T>::value, "Inner type of optional should be constructible!");
+public:
+    DEVICE_FUNC optional(const T& val): flag_(true), val_(val) {}
+    DEVICE_FUNC optional(const none_t& none): flag_(false) {}
+    DEVICE_FUNC optional(): flag_(false) {}
+
+    DEVICE_FUNC operator bool() const
+    {
+        return flag_;
+    }
+
+    DEVICE_FUNC const T& get_val() const
+    {
+        assert(flag_);
+        return val_;
+    } 
+};
 
 
 //device specific functions
@@ -305,6 +351,7 @@ DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_JAC(const affine_point&, cons
 #define ECC_SUB(a, b) ECC_SUB_PROJ(a, b)
 #define ECC_DOUBLE(a) ECC_DOUBLE_PROJ(a)
 #define ECC_EXP(p, d) ECC_double_and_add_affine_exp_PROJ(p, d)
+#define IS_ON_CURVE(p) IS_ON_CURVE_PROJ(p)
 
 #elif defined USE_JACOBIAN_COORDINATES
 
@@ -312,10 +359,34 @@ DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_JAC(const affine_point&, cons
 #define ECC_SUB(a, b) ECC_SUB_JAC(a, b)
 #define ECC_DOUBLE(a) ECC_DOUBLE_JAC(a)
 #define ECC_EXP(p, d) ECC_double_and_add_affine_exp_JAC(p, d)
+#define IS_ON_CURVE(p) IS_ON_CURVE_JAC(p)
 
 #else
 #error The form of elliptic curve coordinates should be explicitely specified
 #endif
+
+//random elements generators
+
+DEVICE_FUNC void gen_random_elem(uint256_g&, curandState&);
+DEVICE_FUNC void gen_random_elem(ec_point&, curandState&);
+DEVICE_FUNC void gen_random_elem(affine_point&, curandState&);
+
+template <typename T>
+__global__ void gen_random_array_kernel(T* elems, size_t arr_len, curandState* state, int seed)
+{
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    /* Each thread gets same seed, a different sequence 
+       number, no offset */
+    curand_init(seed + tid, 0, 0, &state[tid]);
+
+    curandState localState = state[tid];
+
+    while (tid < arr_len)
+    {
+        gen_random_elem(elems[tid], localState);
+        tid += blockDim.x * gridDim.x;
+    }
+}
 
 #endif
 

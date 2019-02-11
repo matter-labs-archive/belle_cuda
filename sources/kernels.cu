@@ -43,7 +43,18 @@ __global__ void func_name##_kernel(input_type *a_arr, input_type *b_arr, output_
 \
 void func_name##_driver(input_type *a_arr, input_type *b_arr, output_type *c_arr, size_t arr_len)\
 {\
-	func_name##_kernel<<<4096, 248>>>(a_arr, b_arr, c_arr, arr_len);\
+	int blockSize;\
+  	int minGridSize;\
+  	int realGridSize;\
+	int optimalGridSize;\
+\
+  	cudaOccupancyMaxPotentialBlockSize( &minGridSize, &blockSize, func_name##_kernel, 0, 0);\
+  	realGridSize = (arr_len + blockSize - 1) / blockSize;\
+	optimalGridSize = min(minGridSize, realGridSize);\
+\
+	std::cout << "Grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;\
+\
+	func_name##_kernel<<<optimalGridSize, blockSize>>>(a_arr, b_arr, c_arr, arr_len);\
 }
 
 #define GENERAL_TEST_1_ARG_1_TYPE(func_name, type) GENERAL_TEST_1_ARG_2_TYPES(func_name, type, type)

@@ -325,3 +325,14 @@ DEVICE_FUNC bool is_even(const uint256_g& x)
 }
 
 
+DEVICE_FUNC void gen_random_elem(uint256_g& x, curandState& state)
+{
+    for (int i = 0; i < N; i++)
+    {
+        x.n[i] = curand(&state);
+    }
+
+    x.n[N - 1] >>= 3;
+}
+
+

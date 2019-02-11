@@ -1957,3 +1957,133 @@ void naive_multiexp_warp_level_recursion_driver(const affine_point* point_arr, c
 }
 
 
+/the main stage of Pippenger algorithm is splitting a lot op points among a relatively small amount of chunks (or bins)
+//This operation can be considered as a sort of histogram construction, so we can use specific Cuda algorithms.
+//Source of inspiration are: 
+//https://devblogs.nvidia.com/voting-and-shuffling-optimize-atomic-operations/
+//https://devblogs.nvidia.com/gpu-pro-tip-fast-histograms-using-shared-atomics-maxwell/
+
+//TODO: what is the exact difference between inline and __inline__
+
+DEVICE_FUNC __inline__ void __shfl(const ec_point& in_var, ec_point& out_var, unsigned int mask, unsigned int offset, int width=32)
+{
+    //ec_point = 3 * 8  = 24 int = 6 int4
+    const int4* a = reinterpret_cast<const int4*>(&in_var);
+    int4* b = reinterpret_cast<int4*>(&out_var);
+
+    for (unsigned i = 0; i < 6; i++)
+    {
+        b[i].x = __shfl_sync(mask, a[i].x, offset, width);
+        b[i].y = __shfl_sync(mask, a[i].y, offset, width);
+        b[i].z = __shfl_sync(mask, a[i].z, offset, width);
+        b[i].w = __shfl_sync(mask, a[i].w, offset, width);
+    }
+}
+
+DEVICE_FUNC __inline__ uint32_t get_peers(uint32_t key)
+{
+    uint32_t peers=0;
+    bool is_peer;
+
+    // in the beginning, all lanes are available
+    uint32_t unclaimed=0xffffffff;
+
+    do
+    {
+        // fetch key of first unclaimed lane and compare with this key
+        is_peer = (key == __shfl_sync(unclaimed, key, __ffs(unclaimed) - 1));
+
+        // determine which lanes had a match
+        peers = __ballot_sync(unclaimed, is_peer);
+
+        // remove lanes with matching keys from the pool
+        unclaimed ^= peers;
+
+
+    }
+    // quit if we had a match
+    while (!is_peer);
+
+    return peers;
+}
+
+DEVICE_FUNC __inline__ ec_point reduce_peers(uint peers, ec_point pt)
+{
+    int lane = threadIdx.x & (warpSize - 1);
+
+    // find the peer with lowest lane index
+    int first = __ffs(peers)-1;
+
+    // calculate own relative position among peers
+    int rel_pos = __popc(peers << (32 - lane));
+
+    // ignore peers with lower (or same) lane index
+    peers &= (0xfffffffe << lane);
+
+    while(__any_sync(peers, peers))
+    {
+        // find next-highest remaining peer
+        int next = __ffs(peers);
+
+        // __shfl() only works if both threads participate, so we always do.
+        ec_point temp;
+        __shfl(pt, temp, peers, next - 1);
+
+        // only add if there was anything to add
+        if (next)
+        {
+            pt = ECC_ADD(pt, temp);
+        }
+
+        // all lanes with their least significant index bit set are done
+        uint32_t done = rel_pos & 1;
+
+        // remove all peers that are already done
+        peers &= ~ __ballot_sync(peers, done);
+
+        // abuse relative position as iteration counter
+        rel_pos >>= 1;
+    }
+
+    return pt;
+}
+
+// __global__ void Pippenger_multiexp_kernel(const ec_point* point_arr, const uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+// {
+//     ec_point acc = point_at_infty();
+    
+//     size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+// 	while (tid < arr_len)
+// 	{   
+//         ec_point x = ECC_EXP(point_arr[tid], power_arr[tid]);
+//         acc = ECC_ADD(acc, x);
+//         tid += blockDim.x * gridDim.x;
+// 	}
+
+//     acc = blockReduceSum(acc);
+    
+//     if (threadIdx.x == 0)
+//         out_arr[blockIdx.x] = acc;
+// }
+
+
+
+__global__ void multiexp_Pippenger(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+{
+    ec_point acc = point_at_infty();
+    
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+	{   
+        ec_point x = ECC_EXP(point_arr[tid], power_arr[tid]);
+        acc = ECC_ADD(acc, x);
+        tid += blockDim.x * gridDim.x;
+	}
+
+    acc = blockReduceSum(acc);
+    
+    if (threadIdx.x == 0)
+        out_arr[blockIdx.x] = acc;
+}
+
+
