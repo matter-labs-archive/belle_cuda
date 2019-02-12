@@ -2067,23 +2067,62 @@ DEVICE_FUNC __inline__ ec_point reduce_peers(uint peers, ec_point pt)
 // }
 
 
+//Pipenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
 
-__global__ void multiexp_Pippenger(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+struct Lock
 {
-    ec_point acc = point_at_infty();
-    
-    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-	while (tid < arr_len)
-	{   
-        ec_point x = ECC_EXP(point_arr[tid], power_arr[tid]);
-        acc = ECC_ADD(acc, x);
-        tid += blockDim.x * gridDim.x;
-	}
+    int* mutex;
 
-    acc = blockReduceSum(acc);
-    
-    if (threadIdx.x == 0)
-        out_arr[blockIdx.x] = acc;
-}
+    Lock()
+    {
+        cudaMalloc((void**)&mutex, sizeof(int));
+        cudaMemset(mutex, 0, sizeof(int));
+    }
+
+    ~Lock()
+    {
+        cudaFree(mutex);
+    }
+
+    DEVICE_FUNC void lock()
+    {
+        while (atomicCAS(mutex, 0, 1) != 0);
+    }
+
+    DEVICE_FUNC void unlock()
+    {
+        atomicExch(mutex, 0);
+    }
+};
+
+//TODO: refactor it later)
+
+template<unsigned M>
+struct LockArr
+{
+    int* mutex_arr;
+
+    LockArr()
+    {
+        cudaMalloc((void**)&mutex_arr, sizeof(int) * M);
+        cudaMemset(mutex_arr, 0, sizeof(int) * M);
+    }
+
+    ~LockArr()
+    {
+        cudaFree(mutex_arr);
+    }
+
+    DEVICE_FUNC void lock(size_t idx)
+    {
+        while (atomicCAS(mutex_arr + idx, 0, 1) != 0);
+    }
+
+    DEVICE_FUNC void unlock(size_t idx)
+    {
+        atomicExch(mutex_arr + idx, 0);
+    }
+};
+
 
 

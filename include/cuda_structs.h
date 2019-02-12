@@ -30,7 +30,7 @@
 #define USE_PROJECTIVE_COORDINATES
 
 #define WARP_SIZE 32
-#define DEFAUL_NUM_OF_THREADS_PER_BLOCK 1024
+#define DEFAUL_NUM_OF_THREADS_PER_BLOCK 512
 
 #define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
 #define SET_BIT(var,pos) ((var) |= (1<<(pos)))
@@ -352,6 +352,7 @@ DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_JAC(const affine_point&, cons
 #define ECC_DOUBLE(a) ECC_DOUBLE_PROJ(a)
 #define ECC_EXP(p, d) ECC_double_and_add_affine_exp_PROJ(p, d)
 #define IS_ON_CURVE(p) IS_ON_CURVE_PROJ(p)
+#define ECC_MIXED_ADD(a, b) ECC_ADD_MIXED_PROJ(a, b)
 
 #elif defined USE_JACOBIAN_COORDINATES
 
@@ -360,6 +361,7 @@ DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_JAC(const affine_point&, cons
 #define ECC_DOUBLE(a) ECC_DOUBLE_JAC(a)
 #define ECC_EXP(p, d) ECC_double_and_add_affine_exp_JAC(p, d)
 #define IS_ON_CURVE(p) IS_ON_CURVE_JAC(p)
+#define ECC_MIXED_ADD(a, b) ECC_ADD_MIXED_JAC(a, b)
 
 #else
 #error The form of elliptic curve coordinates should be explicitely specified

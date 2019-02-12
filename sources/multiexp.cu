@@ -50,7 +50,7 @@ DEVICE_FUNC inline ec_point warpReduceSum(ec_point val)
         __shfl_down(val, temp, offset);
         val = ECC_ADD(val, temp);
     }
-
+           
     return val;
 }
 
@@ -81,38 +81,11 @@ DEVICE_FUNC inline ec_point blockReduceSum(ec_point val)
     return val;
 }
 
-struct Lock
-{
-    int* mutex;
-
-    Lock()
-    {
-        int state = 0;
-        cudaMalloc((void**)&mutex, sizeof(int));
-        cudaMemcpy(mutex, &state, sizeof(int), cudaMemcpyHostToDevice);
-    }
-
-    ~Lock()
-    {
-        cudaFree(mutex);
-    }
-
-    DEVICE_FUNC void lock()
-    {
-        while (atomicCAS(mutex, 0, 1) != 0);
-    }
-
-    DEVICE_FUNC void unlock()
-    {
-        atomicExch(mutex, 0);
-    }
-};
-
 
 //1) using warp level reduction and atomics
 //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-__global__ void naive_multiexp_kernel_warp_level_atomics(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out, size_t arr_len, Lock lock)
+__global__ void naive_multiexp_kernel_warp_level_atomics(affine_point* point_arr, uint256_g* power_arr, ec_point* out, size_t arr_len, int* mutex)
 {
 	ec_point acc = point_at_infty();
     
@@ -125,36 +98,51 @@ __global__ void naive_multiexp_kernel_warp_level_atomics(const affine_point* poi
 	}
 
     acc = warpReduceSum(acc);
-    
+ 
     if ((threadIdx.x & (warpSize - 1)) == 0)
     {
-        lock.lock();
+        while (atomicCAS(mutex, 0, 1) != 0);
+          
         *out = ECC_ADD(*out, acc);
-        lock.unlock();
+       
+        atomicExch(mutex, 0);
     }  
 }
 
-void naive_multiexp_kernel_warp_level_atomics_driver(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out, size_t arr_len)
+void naive_multiexp_kernel_warp_level_atomics_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out, size_t arr_len)
 {
 	int blockSize;
   	int minGridSize;
   	int realGridSize;
-	int optimalGridSize;
 
-    Lock lock;
+    int* mutex;
+    cudaMalloc((void**)&mutex, sizeof(int));
+    cudaMemset(mutex, 0, sizeof(int));
 
   	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_warp_level_atomics, 0, 0);
     realGridSize = (arr_len + blockSize - 1) / blockSize;
-	optimalGridSize = min(minGridSize, realGridSize);
 
 	std::cout << "Grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;
-	naive_multiexp_kernel_warp_level_atomics<<<optimalGridSize, blockSize>>>(point_arr, power_arr, out, arr_len, lock);
+
+    //create point at infty and copy it to output arr
+
+    ec_point point_at_infty = { 
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000}
+    };
+
+    cudaMemcpy(out, &point_at_infty, sizeof(ec_point), cudaMemcpyHostToDevice);
+
+	naive_multiexp_kernel_warp_level_atomics<<<realGridSize, blockSize>>>(point_arr, power_arr, out, arr_len, mutex);
+
+    cudaFree(mutex);
 }
 
 //2) using block level reduction and atomics
 //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-__global__ void naive_multiexp_kernel_block_level_atomics(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out, size_t arr_len, Lock lock)
+__global__ void naive_multiexp_kernel_block_level_atomics(affine_point* point_arr, uint256_g* power_arr, ec_point* out, size_t arr_len, int* mutex)
 {
     ec_point acc = point_at_infty();
     
@@ -169,33 +157,43 @@ __global__ void naive_multiexp_kernel_block_level_atomics(const affine_point* po
     acc = blockReduceSum(acc);
     if (threadIdx.x == 0)
     {
-        lock.lock();
+        while (atomicCAS(mutex, 0, 1) != 0);
         *out = ECC_ADD(*out, acc);
-        lock.unlock();
+        atomicExch(mutex, 0);  
     }
 }
 
-void naive_multiexp_kernel_block_level_atomics_driver(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out, size_t arr_len)
+void naive_multiexp_kernel_block_level_atomics_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out, size_t arr_len)
 {
 	int blockSize;
     int minGridSize;
   	int realGridSize;
-	int optimalGridSize;
 
-    Lock lock;
+    int* mutex;
+    cudaMalloc((void**)&mutex, sizeof(int));
+    cudaMemset(mutex, 0, sizeof(int));
 
   	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_atomics, 0, 4 * N * 3 * WARP_SIZE);
   	realGridSize = (arr_len + blockSize - 1) / blockSize;
-	optimalGridSize = min(minGridSize, realGridSize);
+
+    ec_point point_at_infty = { 
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000}
+    };
+
+    cudaMemcpy(out, &point_at_infty, sizeof(ec_point), cudaMemcpyHostToDevice);
 
 	std::cout << "Grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;
-	naive_multiexp_kernel_block_level_atomics<<<optimalGridSize, blockSize>>>(point_arr, power_arr, out, arr_len, lock);
+	naive_multiexp_kernel_block_level_atomics<<<realGridSize, blockSize>>>(point_arr, power_arr, out, arr_len, mutex);
+
+    cudaFree(mutex);
 }
 
-//4) using block level reduction and recursion
+//3) using block level reduction and recursion
 //---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-__global__ void naive_multiexp_kernel_block_level_recursion(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+__global__ void naive_multiexp_kernel_block_level_recursion(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
 {
     ec_point acc = point_at_infty();
     
@@ -213,7 +211,7 @@ __global__ void naive_multiexp_kernel_block_level_recursion(const affine_point* 
         out_arr[blockIdx.x] = acc;
 }
 
-__global__ void naive_kernel_block_level_reduction(const ec_point* in_arr, ec_point* out_arr, size_t arr_len)
+__global__ void naive_kernel_block_level_reduction(ec_point* in_arr, ec_point* out_arr, size_t arr_len)
 {
     ec_point acc = point_at_infty();
     
@@ -230,25 +228,99 @@ __global__ void naive_kernel_block_level_reduction(const ec_point* in_arr, ec_po
         out_arr[blockIdx.x] = acc;
 }
 
-void naive_multiexp_kernel_block_level_recursion_driver(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+void naive_multiexp_kernel_block_level_recursion_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
 {
     int blockSize;
   	int minGridSize;
   	int realGridSize;
-	int optimalGridSize;
 
   	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_recursion, 0, 4 * N * 3 * WARP_SIZE);
-  	realGridSize = (arr_len + blockSize - 1) / blockSize;
-	optimalGridSize = min(minGridSize, realGridSize);
-    optimalGridSize = min(optimalGridSize, DEFAUL_NUM_OF_THREADS_PER_BLOCK);
+  	realGridSize = (arr_len + blockSize - 1) / blockSize;;
+    realGridSize = min(realGridSize, DEFAUL_NUM_OF_THREADS_PER_BLOCK);
     
 	std::cout << "Real grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;
-	naive_multiexp_kernel_block_level_recursion<<<optimalGridSize, blockSize>>>(point_arr, power_arr, out_arr, arr_len);
-    naive_kernel_block_level_reduction<<<1, DEFAUL_NUM_OF_THREADS_PER_BLOCK>>>(out_arr, out_arr, optimalGridSize);
+	naive_multiexp_kernel_block_level_recursion<<<realGridSize, blockSize>>>(point_arr, power_arr, out_arr, arr_len);
+    cudaDeviceSynchronize();
+    naive_kernel_block_level_reduction<<<1, DEFAUL_NUM_OF_THREADS_PER_BLOCK>>>(out_arr, out_arr, realGridSize);
 }
 
-//Pipenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
+//Pippenger
 //---------------------------------------------------------------------------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------------------------------------------------------------------------
 
+//Pippenger final exponentiation
+
+__global__ void Pippenger_final_exponentiation(ec_point* in_arr, ec_point* out_arr, size_t arr_len)
+{
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+    {   
+        ec_point pt = in_arr[tid];
+
+        for (size_t j = 0; j < threadIdx.x; j++)
+            pt = ECC_DOUBLE(pt);
+        
+        out_arr[tid] = pt;
+
+        tid += blockDim.x * gridDim.x;
+	}
+}
+
+__global__ void multiexp_Pippenger(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len, int* mutex_arr)
+{
+    ec_point acc = point_at_infty();
+    
+    size_t start = (arr_len / gridDim.x) * blockIdx.x;
+    size_t end = (arr_len / gridDim.x) * (blockIdx.x + 1);
+
+    for (size_t i = start; i < end; i++)
+    {
+        if (get_bit(power_arr[i], threadIdx.x))
+            acc = ECC_MIXED_ADD(acc, point_arr[i]);
+    }
+
+    while (atomicCAS(mutex_arr + threadIdx.x, 0, 1) != 0);
+    out_arr[threadIdx.x] = ECC_ADD(out_arr[threadIdx.x], acc);
+    atomicExch(mutex_arr + threadIdx.x, 0);   
+}
+
+void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+{
+    int blockSize;
+  	int minGridSize;
+  	int realGridSize;
+
+    size_t M = 256;
+    int* mutex_arr;
+    cudaMalloc((void**)&mutex_arr, sizeof(int) * M);
+    cudaMemset(mutex_arr, 0, sizeof(int) * M);
+
+  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, multiexp_Pippenger, 0, 4 * N * 3 * WARP_SIZE);
+  	realGridSize = (arr_len + blockSize - 1) / blockSize;;
+
+    //but here we need an array of such elements!
+
+    ec_point point_at_infty = { 
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000}
+    };
+
+    for (size_t j = 0 ; j < 256; j++)
+    {
+        cudaMemcpy(out_arr + j, &point_at_infty, sizeof(ec_point), cudaMemcpyHostToDevice);
+    }
+    
+	std::cout << "Real grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;
+
+	multiexp_Pippenger<<<realGridSize, 256>>>(point_arr, power_arr, out_arr, arr_len, mutex_arr);
+    cudaDeviceSynchronize();
+
+    Pippenger_final_exponentiation<<<1, 256>>>(out_arr, out_arr, 256);
+    cudaDeviceSynchronize();
+
+    naive_kernel_block_level_reduction<<<1, 256>>>(out_arr, out_arr, 256);
+
+    cudaFree(mutex_arr);
+}

@@ -50,7 +50,7 @@ template<typename Atype, typename Btype, typename Ctype>
 using kernel_func_vec_t = std::vector<std::pair<const char*, kernel_func_ptr<Atype, Btype, Ctype>>>;
 
 template<typename Atype, typename Btype, typename Ctype>
-void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench_len)
+void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench_len, bool scalar_return = false)
 {
     Atype* A_host_arr = nullptr;
     Btype* B_host_arr = nullptr;
@@ -112,27 +112,45 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
     }
 
     //generate ranodm elements in both input arrays
-    for (auto arr : {A_dev_arr, B_dev_arr})
+
+    gen_random_array_kernel<<<optimalGridSize, blockSize>>>(A_dev_arr, bench_len, devStates, rand());
+
+    // Check for any errors launching the kernel
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess)
     {
-        gen_random_array_kernel<<<optimalGridSize, blockSize>>>(arr, bench_len, devStates, rand());
-
-        // Check for any errors launching the kernel
-        cudaStatus = cudaGetLastError();
-        if (cudaStatus != cudaSuccess)
-        {
-            fprintf(stderr, "random elements generator kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-            goto Error;
-        }
-
-        // cudaDeviceSynchronize waits for the kernel to finish, and returns
-        // any errors encountered during the launch.
-        cudaStatus = cudaDeviceSynchronize();
-        if (cudaStatus != cudaSuccess)
-        {
-            fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-            goto Error;
-        }
+        fprintf(stderr, "random elements generator kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        goto Error;
     }
+
+    // cudaDeviceSynchronize waits for the kernel to finish, and returns
+    // any errors encountered during the launch.
+    cudaStatus = cudaDeviceSynchronize();
+    if (cudaStatus != cudaSuccess)
+    {
+        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+        goto Error;
+    }
+
+    gen_random_array_kernel<<<optimalGridSize, blockSize>>>(B_dev_arr, bench_len, devStates, rand());
+
+    // Check for any errors launching the kernel
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess)
+    {
+        fprintf(stderr, "random elements generator kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        goto Error;
+    }
+
+    // cudaDeviceSynchronize waits for the kernel to finish, and returns
+    // any errors encountered during the launch.
+    cudaStatus = cudaDeviceSynchronize();
+    if (cudaStatus != cudaSuccess)
+    {
+        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+        goto Error;
+    }
+
 
 #ifdef PRINT_BENCHES
 
@@ -140,7 +158,10 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
 
     A_host_arr = (Atype*)malloc(bench_len * sizeof(Atype));
     B_host_arr = (Btype*)malloc(bench_len * sizeof(Btype));
-    C_host_arr = (Ctype*)malloc(bench_len * sizeof(Ctype));
+    if (scalar_return)
+         C_host_arr = (Ctype*)malloc(sizeof(Ctype));
+    else
+        C_host_arr = (Ctype*)malloc(bench_len * sizeof(Ctype));
 
     cudaStatus = cudaMemcpy(A_host_arr, A_dev_arr, bench_len * sizeof(Atype), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess)
@@ -149,7 +170,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         goto Error;
     }
 
-    cudaStatus = cudaMemcpy(B_dev_arr, B_host_arr, bench_len * sizeof(Btype), cudaMemcpyHostToDevice);
+    cudaStatus = cudaMemcpy(B_host_arr, B_dev_arr, bench_len * sizeof(Btype), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess)
     {
         fprintf(stderr, "cudaMemcpy (B_arrs) failed!\n");
@@ -203,23 +224,41 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
 
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
-        std::cout << "ns total GPU: "  << std::dec << duration  << "ns." << std::endl;
+        std::cout << "ns total GPU: "  << std::dec << duration  << "ns." << std::endl << std::endl << std::endl;
 
 #ifdef PRINT_BENCHES
 
-        cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, bench_len * sizeof(Ctype), cudaMemcpyDeviceToHost);
-        if (cudaStatus != cudaSuccess)
+        if (scalar_return)
         {
-            fprintf(stderr, "cudaMemcpy (C_arrs) failed!\n");
-            goto Error;
-        }
+            cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, sizeof(Ctype), cudaMemcpyDeviceToHost);
+            if (cudaStatus != cudaSuccess)
+            {
+                fprintf(stderr, "cudaMemcpy (C_elem) failed!\n");
+                goto Error;
+            }
 
-        std::cout << "C array:" << std::endl;
-        for (size_t i = 0; i < bench_len; i++)
-        {
-            std::cout << C_host_arr[i] << std::endl;
+            std::cout << "C elem:" << std::endl;
+            std::cout << C_host_arr[0] << std::endl;
+            std::cout << std::endl;
         }
-        std::cout << std::endl;
+        else
+        {
+            cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, bench_len * sizeof(Ctype), cudaMemcpyDeviceToHost);
+            if (cudaStatus != cudaSuccess)
+            {
+                fprintf(stderr, "cudaMemcpy (C_arrs) failed!\n");
+                goto Error;
+            }
+
+            std::cout << "C array:" << std::endl;
+            for (size_t i = 0; i < bench_len; i++)
+            {
+                std::cout << C_host_arr[i] << std::endl;
+            }
+            std::cout << std::endl;
+        }
+        
+       
 
 #endif
     }
@@ -327,12 +366,26 @@ ecc_point_exp_func_vec_t exp_curve_point_bench = {
     {"exp via ternary expansion in Jacobian coordinates", ECC_ternary_expansion_exp_JAC_driver}
 };
 
+using ecc_multiexp_func_vec_t = kernel_func_vec_t<affine_point, uint256_g, ec_point>;
+
+void naive_multiexp_kernel_warp_level_atomics_driver(affine_point*, uint256_g*, ec_point*, size_t);
+void naive_multiexp_kernel_block_level_atomics_driver(affine_point*, uint256_g*, ec_point*, size_t);
+void naive_multiexp_kernel_block_level_recursion_driver(affine_point*, uint256_g*, ec_point*, size_t);
+void Pippenger_driver(affine_point*, uint256_g*, ec_point*, size_t);
+
+ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
+    {"naive warp level approach with atomics", naive_multiexp_kernel_warp_level_atomics_driver},
+    {"naive block level approach with atomics", naive_multiexp_kernel_block_level_atomics_driver},
+    //{"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
+    {"very silly Pippenger", Pippenger_driver}
+};
+
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t bench_len = 0x3;
+size_t bench_len = 100000;
 
 int main(int argc, char* argv[])
 {
@@ -348,32 +401,35 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
-    std::cout << "Benchmark length: " << bench_len << std::endl;
+    std::cout << "Benchmark length: " << bench_len << std::endl << std::endl;
 
 	
-	// std::cout << "addition benchmark: " << std::endl;
+	// std::cout << "addition benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(addition_bench, bench_len);
 
-	// std::cout << "substraction benchmark: " << std::endl;
+	// std::cout << "substraction benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(substraction_bench, bench_len);
 
-	std::cout << "multiplication benchmark: " << std::endl;
-	gpu_benchmark(mul_bench, bench_len);
+	// std::cout << "multiplication benchmark: " << std::endl << std::endl;
+	// gpu_benchmark(mul_bench, bench_len);
 
-	// std::cout << "square benchmark: " << std::endl;
+	// std::cout << "square benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(square_bench, bench_len);
 
-	// std::cout << "montgomery multiplication benchmark: " << std::endl;
+	// std::cout << "montgomery multiplication benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(mont_mul_bench, bench_len);
 
-    // std::cout << "ECC add-sub benchmark: " << std::endl;
+    // std::cout << "ECC add-sub benchmark: " << std::endl << std::endl;
     // gpu_benchmark(add_sub_curve_points_bench, bench_len);
 
-    // std::cout << "ECC double benchmark: " << std::endl;
+    // std::cout << "ECC double benchmark: " << std::endl << std::endl;
     // gpu_benchmark(double_curve_point_bench, bench_len);
 
-    // std::cout << "ECC exponentiation benchmark: " << std::endl;
+    // std::cout << "ECC exponentiation benchmark: " << std::endl << std::endl;
     // gpu_benchmark(exp_curve_point_bench, bench_len);
+
+    std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
+    gpu_benchmark(multiexp_curve_point_bench, bench_len, true);
 
     return 0;
 }
