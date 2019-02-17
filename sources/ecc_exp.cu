@@ -51,15 +51,14 @@ DEVICE_FUNC ec_point ECC_ternary_expansion_exp##SUFFIX(const ec_point& pt, const
         {\
             if (x && !z)\
             {\
-                x = 0;\
-                y = 1;\
-                R = ECC_DOUBLE##SUFFIX(R);\
-                continue;\
+                y = 0;\
+                z = 1;\
             }\
-            if (!x && !z)\
-                Q = ECC_ADD##SUFFIX(Q, R);\
-            if (!x && z)\
-                Q = ECC_SUB##SUFFIX(Q, R);\
+            else if (!x)\
+            {\
+                ec_point temp = (z ? INV(R) : R);\
+                Q = ECC_ADD##SUFFIX(Q, temp);\
+            }\
         }\
 \
         x = y;\
@@ -127,6 +126,23 @@ static constexpr uint32_t MAX_WNAF_DATA_ARRAY_LEN = (N_BITLEN / WINDOW_SIZE ) + 
 //returns the number of wnaf_auxiliary_data in form array
 //we also assume that bit-len of w is less than word-size
 
+using clock_value_t = long long;
+
+__device__ void sleep(clock_value_t sleep_cycles)
+{
+    clock_value_t start = clock64();
+    clock_value_t cycles_elapsed;
+    do { cycles_elapsed = clock64() - start; } 
+    while (cycles_elapsed < sleep_cycles);
+}
+
+#include <stdio.h>
+
+__device__ void print_uint256(const uint256_g& val)
+{
+    printf("%x %x %x %x %x %x %x %x\n", val.n[7], val.n[6], val.n[5], val.n[4], val.n[3], val.n[2], val.n[1], val.n[0]);
+}
+
 DEVICE_FUNC static inline uint32_t convert_to_non_adjacent_form(const uint256_g& power, wnaf_auxiliary_data* form)
 {
     uint32_t elem_count = 0;
@@ -135,9 +151,11 @@ DEVICE_FUNC static inline uint32_t convert_to_non_adjacent_form(const uint256_g&
 
     while (!is_zero(d))
     {
-        if (is_even(d))
+        uint32_t pos = __ffs(d.n[0]);
+        uint32_t shift;
+        if (pos == 1)
         {
-            int8_t val = d.n[0] & EXP2(WINDOW_SIZE);
+            int8_t val = d.n[0] & (EXP2(WINDOW_SIZE) - 1);
             if (val >= EXP2_MINUS_1(WINDOW_SIZE))
             {
                 val -= EXP2(WINDOW_SIZE);
@@ -147,58 +165,74 @@ DEVICE_FUNC static inline uint32_t convert_to_non_adjacent_form(const uint256_g&
             {
                 SUB_UINT(d, val);
             }
-
+          
             form[elem_count++] = {val, current_gap};
             current_gap = WINDOW_SIZE;
-            d = SHIFT_RIGHT(d, WINDOW_SIZE);                     
+            shift = WINDOW_SIZE;  
         }
         else
         {
-            current_gap++;
-            d = SHIFT_RIGHT(d, 1);   
+            shift = min(pos - 1, 32);
+            current_gap += shift;
+            shift = 32;
         }
+
+        d = SHIFT_RIGHT(d, shift);    
     }
 
     return elem_count;
 }
 
-//TODO: may be better convert to affine?
-
-DEVICE_FUNC ec_point ECC_wNAF_exp(const ec_point& pt, const uint256_g& power)
-{
-    if (is_zero(power))
-        return point_at_infty();
-
-    //precompute small powers
-
-    ec_point precomputed[PRECOMPUTED_ARRAY_LEN];
-    wnaf_auxiliary_data wnaf_arr[MAX_WNAF_DATA_ARRAY_LEN];
-    
-    ec_point pt_doubled = ECC_DOUBLE_PROJ(pt);
-    precomputed[0] = pt;
-
-    for (uint32_t i = 1; i < PRECOMPUTED_ARRAY_LEN; i++)
-    {
-        precomputed[i] = ECC_ADD_PROJ(precomputed[i-1], pt_doubled);
-    }
-
-    //convert degree to wNAF-form
-    auto count = convert_to_non_adjacent_form(power, wnaf_arr);
-    ec_point Q = point_at_infty();
-    
-    for (int j = count - 1; j >=0 ; j--)
-    {
-        auto& wnaf_data = wnaf_arr[j];
-        if (wnaf_data.value >= 0)
-            Q = ECC_ADD_PROJ(Q, precomputed[(wnaf_data.value - 1)/ 2]);
-        else
-            Q = ECC_SUB_PROJ(Q, precomputed[(-wnaf_data.value - 1)/ 2]);
-        
-        for(uint8_t k = 0; k < wnaf_data.gap; k++)
-            Q = ECC_DOUBLE_PROJ(Q);
-    }
-   
-   return Q;   
+#define ECC_WNAF_EXP(SUFFIX) \
+DEVICE_FUNC ec_point ECC_wNAF_exp##SUFFIX(const ec_point& pt, const uint256_g& power)\
+{\
+    if (is_zero(power))\
+        return point_at_infty();\
+\
+    ec_point precomputed[PRECOMPUTED_ARRAY_LEN];\
+    wnaf_auxiliary_data wnaf_arr[MAX_WNAF_DATA_ARRAY_LEN];\
+\
+    ec_point pt_doubled = ECC_DOUBLE##SUFFIX(pt);\
+    precomputed[0] = pt;\
+\
+    for (uint32_t i = 1; i < PRECOMPUTED_ARRAY_LEN; i++)\
+    {\
+        precomputed[i] = ECC_ADD##SUFFIX(precomputed[i-1], pt_doubled);\
+    }\
+\
+    auto count = convert_to_non_adjacent_form(power, wnaf_arr);\
+    ec_point Q = point_at_infty();\
+\
+    for (int j = count - 1; j >=0 ; j--)\
+    {\
+        auto& wnaf_data = wnaf_arr[j];\
+        int8_t abs_offset;\
+        bool is_negative;\
+        if (wnaf_data.value >= 0)\
+        {\
+            abs_offset = wnaf_data.value;\
+            is_negative = false;\
+        }\
+        else\
+        {\
+            abs_offset = -wnaf_data.value;\
+            is_negative = true;\
+        }\
+\
+        ec_point temp = precomputed[(abs_offset - 1)/ 2];\
+        if (is_negative)\
+            temp = INV(temp);\
+\
+        Q = ECC_ADD##SUFFIX(Q, temp);\
+\
+        for(uint8_t k = 0; k < wnaf_data.gap; k++)\
+            Q = ECC_DOUBLE##SUFFIX(Q);\
+    }\
+\
+   return Q;\
 }
+
+ECC_WNAF_EXP(_PROJ)
+ECC_WNAF_EXP(_JAC)
 
 

@@ -2124,5 +2124,78 @@ struct LockArr
     }
 };
 
+p = 21888242871839275222246405745257275088696311157297823662689037894645226208583
+r = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+
+base_field = GF(p)
+curve = EllipticCurve(GF(p), [0, 3]);
+G = curve(1, 2, 1)
+
+R = field(2 ^ 256)
 
 
+
+\
+    auto count = convert_to_non_adjacent_form(power, wnaf_arr);\
+    ec_point Q = point_at_infty();\
+\
+    for (int j = count - 1; j >=0 ; j--)\
+    {\
+        auto& wnaf_data = wnaf_arr[j];\
+        int8_t abs_offset;\
+        bool is_negative;\
+        if (wnaf_data.value >= 0)\
+        {\
+            abs_offset = wnaf_data.value;\
+            is_negative = false;\
+        }\
+        else\
+        {\
+            abs_offset = -wnaf_data.value;\
+            is_negative = true;\
+        }\
+\
+        ec_point temp = precomputed[(abs_offset - 1)/ 2];\
+        if (is_negative)\
+            temp = INV(temp);\
+\
+        Q = ECC_ADD##SUFFIX(Q, temp);\
+\
+        for(uint8_t k = 0; k < wnaf_data.gap; k++)\
+            Q = ECC_DOUBLE##SUFFIX(Q);\
+    }\
+\
+   return Q;\
+
+
+   "sub.u32 y, 32, x;\n\t"
+
+            "shr.b32 %8, %0, x;\n\t"
+            "shl.b32 temp, %1, y;\n\t"
+            "or.b32 %8, %8, temp;\n\t"
+
+            "shr.b32 %9, %1, x;\n\t"
+            "shl.b32 temp, %2, y;\n\t"
+            "or.b32 %9, %9, temp;\n\t"
+
+            "shr.b32 %10, %2, x;\n\t"
+            "shl.b32 temp, %3, y;\n\t"
+            "or.b32 %10, %10, temp;\n\t"
+
+            "shr.b32 %11, %3, x;\n\t"
+            "shl.b32 temp, %4, y;\n\t"
+            "or.b32 %11, %11, temp;\n\t"
+
+            "shr.b32 %12, %4, x;\n\t"
+            "shl.b32 temp, %5, y;\n\t"
+            "or.b32 %12, %12, temp;\n\t"
+
+            "shr.b32 %13, %5, x;\n\t"
+            "shl.b32 temp, %6, y;\n\t"
+            "or.b32 %13, %13, temp;\n\t"
+
+            "shr.b32 %14, %6, x;\n\t"
+            "shl.b32 temp, %7, y;\n\t"
+            "or.b32 %14, %14, temp;\n\t"
+
+            "shr.b32 %15, %7, x;\n\t"

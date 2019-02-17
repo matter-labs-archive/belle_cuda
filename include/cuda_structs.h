@@ -344,6 +344,9 @@ DEVICE_FUNC ec_point ECC_double_and_add_exp_JAC(const ec_point&, const uint256_g
 DEVICE_FUNC ec_point ECC_ternary_expansion_exp_JAC(const ec_point&, const uint256_g&);
 DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_PROJ(const affine_point&, const uint256_g&);
 DEVICE_FUNC ec_point ECC_double_and_add_affine_exp_JAC(const affine_point&, const uint256_g&);
+DEVICE_FUNC ec_point ECC_wNAF_exp_PROJ(const ec_point&, const uint256_g&);
+DEVICE_FUNC ec_point ECC_wNAF_exp_JAC(const ec_point&, const uint256_g&);
+
 
 #ifdef USE_PROJECTIVE_COORDINATES
 

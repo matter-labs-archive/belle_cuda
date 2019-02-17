@@ -17,9 +17,17 @@ void func_name##_driver(A_type *a_arr, B_type *b_arr, C_type *c_arr, size_t arr_
 	int blockSize;\
   	int minGridSize;\
   	int realGridSize;\
+	int maxActiveBlocks;\
 \
   	cudaOccupancyMaxPotentialBlockSize( &minGridSize, &blockSize, func_name##_kernel, 0, 0);\
   	realGridSize = (arr_len + blockSize - 1) / blockSize;\
+\
+	cudaDeviceProp prop;\
+  	cudaGetDeviceProperties(&prop, 0);\
+	uint32_t smCount = prop.multiProcessorCount;\
+	cudaError_t error = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, func_name##_kernel, blockSize, 0);\
+    if (error == cudaSuccess && realGridSize > maxActiveBlocks * smCount)\
+    	realGridSize = maxActiveBlocks * smCount;\
 \
 	std::cout << "Grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;\
 	func_name##_kernel<<<realGridSize, blockSize>>>(a_arr, b_arr, c_arr, arr_len);\

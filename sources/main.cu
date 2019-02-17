@@ -42,6 +42,13 @@ std::ostream& operator<<(std::ostream& os, const ec_point& pt)
     return os;
 }
 
+std::ostream& operator<<(std::ostream& os, const affine_point& pt)
+{
+    os << "x = " << pt.x << std::endl;
+    os << "y = " << pt.y << std::endl;
+    return os;
+}
+
 
 template<typename Atype, typename Btype, typename Ctype>
 using kernel_func_ptr = void (*)(Atype*, Btype*, Ctype*, size_t);
@@ -218,7 +225,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         cudaStatus = cudaDeviceSynchronize();
         if (cudaStatus != cudaSuccess)
         {
-            fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+            fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching Kernel %s!\n", cudaStatus, message);
             goto Error;
         }
 
@@ -358,13 +365,29 @@ void ECC_double_and_add_exp_PROJ_driver(ec_point*, uint256_g*, ec_point*, size_t
 void ECC_ternary_expansion_exp_PROJ_driver(ec_point*, uint256_g*, ec_point*, size_t);
 void ECC_double_and_add_exp_JAC_driver(ec_point*, uint256_g*, ec_point*, size_t);
 void ECC_ternary_expansion_exp_JAC_driver(ec_point*, uint256_g*, ec_point*, size_t);
+void ECC_wNAF_exp_PROJ_driver(ec_point*, uint256_g*, ec_point*, size_t);
+void ECC_wNAF_exp_JAC_driver(ec_point*, uint256_g*, ec_point*, size_t);
 
 ecc_point_exp_func_vec_t exp_curve_point_bench = {
-    {"double and add in projective coordinates", ECC_double_and_add_exp_PROJ_driver},
-    {"exp via ternary expansion in projective coordinates", ECC_ternary_expansion_exp_PROJ_driver},
-    {"double and add in Jacobian coordinates", ECC_double_and_add_exp_JAC_driver},
-    {"exp via ternary expansion in Jacobian coordinates", ECC_ternary_expansion_exp_JAC_driver}
+    //{"double and add in projective coordinates", ECC_double_and_add_exp_PROJ_driver},
+    //{"exp via ternary expansion in projective coordinates", ECC_ternary_expansion_exp_PROJ_driver},
+    {"wNaf exp in projective coordinates", ECC_wNAF_exp_PROJ_driver},
+    //{"double and add in Jacobian coordinates", ECC_double_and_add_exp_JAC_driver},
+    //{"exp via ternary expansion in Jacobian coordinates", ECC_ternary_expansion_exp_JAC_driver},
+    //{"wNaf exp in Jacobian coordinates", ECC_wNAF_exp_JAC_driver}
 };
+
+
+using ecc_point_affine_exp_func_vec_t = kernel_func_vec_t<affine_point, uint256_g, ec_point>;
+
+void ECC_double_and_add_affine_exp_PROJ_driver(affine_point*, uint256_g*, ec_point*, size_t);
+void ECC_double_and_add_affine_exp_JAC_driver(affine_point*, uint256_g*, ec_point*, size_t);
+
+ecc_point_affine_exp_func_vec_t affine_exp_curve_point_bench = {
+    {"double and add in projective coordinates", ECC_double_and_add_affine_exp_PROJ_driver},
+    {"double and add in Jacobian coordinates", ECC_double_and_add_affine_exp_JAC_driver}
+};
+
 
 using ecc_multiexp_func_vec_t = kernel_func_vec_t<affine_point, uint256_g, ec_point>;
 
@@ -385,7 +408,8 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t bench_len = 100000;
+//size_t bench_len = 10000;
+size_t bench_len = 1;
 
 int main(int argc, char* argv[])
 {
@@ -425,11 +449,14 @@ int main(int argc, char* argv[])
     // std::cout << "ECC double benchmark: " << std::endl << std::endl;
     // gpu_benchmark(double_curve_point_bench, bench_len);
 
-    // std::cout << "ECC exponentiation benchmark: " << std::endl << std::endl;
-    // gpu_benchmark(exp_curve_point_bench, bench_len);
+    std::cout << "ECC exponentiation benchmark: " << std::endl << std::endl;
+    gpu_benchmark(exp_curve_point_bench, bench_len);
 
-    std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    gpu_benchmark(multiexp_curve_point_bench, bench_len, true);
+    // std::cout << "ECC affine exponentiation benchmark: " << std::endl << std::endl;
+    // gpu_benchmark(affine_exp_curve_point_bench, bench_len);
+
+    // std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
+    // gpu_benchmark(multiexp_curve_point_bench, bench_len, true);
 
     return 0;
 }
