@@ -119,8 +119,8 @@ struct wnaf_auxiliary_data
 #define EXP2(w) (1 << w)
 #define EXP2_MINUS_1(w) (1 << (w - 1))
 
-static constexpr uint32_t PRECOMPUTED_ARRAY_LEN = (1 << (WINDOW_SIZE - 2)) - 2;
-static constexpr uint32_t MAX_WNAF_DATA_ARRAY_LEN = (N_BITLEN / WINDOW_SIZE ) + 1;
+static constexpr uint32_t PRECOMPUTED_ARRAY_LEN = (1 << (WINDOW_SIZE - 2));
+static constexpr uint32_t MAX_WNAF_DATA_ARRAY_LEN = 2 * (N_BITLEN / (WINDOW_SIZE + 1) ) + 1;
 
 //NB: we assume that power is nonzero here
 //returns the number of wnaf_auxiliary_data in form array
@@ -174,11 +174,16 @@ DEVICE_FUNC static inline uint32_t convert_to_non_adjacent_form(const uint256_g&
         {
             shift = min(pos - 1, 32);
             current_gap += shift;
-            shift = 32;
         }
 
         d = SHIFT_RIGHT(d, shift);    
     }
+
+    //printf("%d : %d\n\n", elem_count, MAX_WNAF_DATA_ARRAY_LEN);
+    // for(int i = 0; i < elem_count; i++)
+    // {
+    //     printf("%i: %u\n", form[i].value, form[i].gap);
+    // }
 
     return elem_count;
 }

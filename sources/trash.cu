@@ -2199,3 +2199,78 @@ R = field(2 ^ 256)
             "or.b32 %14, %14, temp;\n\t"
 
             "shr.b32 %15, %7, x;\n\t"
+
+
+
+
+def split(d):
+    wnaf_data = []
+    gap = 0
+    while ( d > 0):
+        if (d % 2 == 0):
+            gap = gap + 1
+            d = d / 2
+        else:
+            val = d % 16
+           
+            if ( val >= 8):
+                val = val - 16
+            
+            wnaf_data.append((val, gap))
+            gap = 4
+            d = d - val
+            if ( d % 16):
+                print "error"
+            d = d / 16
+            
+    return wnaf_data
+
+x = 0x0c82d1d0ceb1a679195bd2308de3fcdc2085d81e72ac0b037df0ac63c18cba42
+y = 0x2ddeef4b2e85fcbd491dbd10abf9b0d58c76d28ba938f4cf632dd2829f0e5f2e
+z = 0x0e0a77c19a07df2f666ea36f7879462c0a78eb28f5c70b3dd35d438dc58f0d9d
+
+
+
+            
+pt = curve(x, y, z)
+n = 0x1e581b79b5350a43bc7f3bd165933136720a5ce0010f43bea73b5f404bf9d790
+
+
+
+    
+    
+data =  split(n)[::-1]
+pt_doubled = 2 * pt
+
+
+precomputed.append(pt)
+for _ in xrange(4):
+    if _ > 0:
+        precomputed.append(precomputed[_-1] + pt_doubled)
+
+Q = curve(0, 1, 0)
+
+for i in xrange(len(data)):
+    val = data[i][0]
+    gap = data[i][1]
+    offset = abs(val)
+    is_positive = (val >= 0)
+    
+    P = precomputed[(offset-1)/2]
+    if is_positive:
+        Q = Q + P
+    else:
+        Q = Q - P
+        
+    for j in xrange(gap):
+        Q = 2 * Q
+
+        
+print Q == n * pt
+
+x = 0x178046057c2d02cdefc68e37ee7a934d5c423e25ac2151ee3639b1b0596d4332
+y = 0x2f9dbe1fd3343e0838031c8d2e8686d6dcfff58dffd8ad4d5610afd2ab76c8bd
+z = 0x2ad40110c750927d33d3d5b4a13b7e03a59c7a00a5e6ef0ac622b91a447698c4
+
+
+print Q == curve(x, y, z)

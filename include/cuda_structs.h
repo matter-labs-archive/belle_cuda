@@ -30,7 +30,7 @@
 #define USE_PROJECTIVE_COORDINATES
 
 #define WARP_SIZE 32
-#define DEFAUL_NUM_OF_THREADS_PER_BLOCK 512
+#define DEFAUL_NUM_OF_THREADS_PER_BLOCK 256
 
 #define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
 #define SET_BIT(var,pos) ((var) |= (1<<(pos)))
