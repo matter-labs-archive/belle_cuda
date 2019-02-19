@@ -400,7 +400,6 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
     {"naive warp level approach with atomics", naive_multiexp_kernel_warp_level_atomics_driver},
     {"naive block level approach with atomics", naive_multiexp_kernel_block_level_atomics_driver},
     {"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
-    //{"very silly Pippenger", Pippenger_driver}
 };
 
 //-------------------------------------------------------------------------------------------------------------------------------------------------
@@ -408,7 +407,7 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t bench_len = 10000;
+size_t bench_len = 1000000;
 //size_t bench_len = 3;
 
 int main(int argc, char* argv[])

@@ -122,6 +122,14 @@ void naive_multiexp_kernel_warp_level_atomics_driver(affine_point* point_arr, ui
   	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_warp_level_atomics, 0, 0);
     realGridSize = (arr_len + blockSize - 1) / blockSize;
 
+    int maxActiveBlocks;
+    cudaDeviceProp prop;
+  	cudaGetDeviceProperties(&prop, 0);
+	uint32_t smCount = prop.multiProcessorCount;
+	cudaError_t error = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, naive_multiexp_kernel_warp_level_atomics, blockSize, 0);
+    if (error == cudaSuccess && realGridSize > maxActiveBlocks * smCount)
+    	realGridSize = maxActiveBlocks * smCount;
+
 	std::cout << "Grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;
 
     //create point at infty and copy it to output arr
@@ -175,6 +183,15 @@ void naive_multiexp_kernel_block_level_atomics_driver(affine_point* point_arr, u
 
   	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_atomics, 0, 4 * N * 3 * WARP_SIZE);
   	realGridSize = (arr_len + blockSize - 1) / blockSize;
+
+    int maxActiveBlocks;
+    cudaDeviceProp prop;
+  	cudaGetDeviceProperties(&prop, 0);
+	uint32_t smCount = prop.multiProcessorCount;
+	cudaError_t error = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, naive_multiexp_kernel_block_level_atomics, 
+        blockSize, 4 * N * 3 * WARP_SIZE);
+    if (error == cudaSuccess && realGridSize > maxActiveBlocks * smCount)
+    	realGridSize = maxActiveBlocks * smCount;
 
     ec_point point_at_infty = { 
         {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
@@ -233,15 +250,65 @@ void naive_multiexp_kernel_block_level_recursion_driver(affine_point* point_arr,
     int blockSize;
   	int minGridSize;
   	int realGridSize;
+    int maxActiveBlocks;
 
-  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_recursion, 0, 4 * N * 3 * WARP_SIZE);
-  	realGridSize = (arr_len + blockSize - 1) / blockSize;;
-    realGridSize = min(realGridSize, DEFAUL_NUM_OF_THREADS_PER_BLOCK);
+    int maxExpGridSize, ExpBlockSize;
+    int maxReductionGridSize, ReductionBlockSize;
     
-	std::cout << "Real grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;
-	naive_multiexp_kernel_block_level_recursion<<<realGridSize, blockSize>>>(point_arr, power_arr, out_arr, arr_len);
-    cudaDeviceSynchronize();
-    naive_kernel_block_level_reduction<<<1, DEFAUL_NUM_OF_THREADS_PER_BLOCK>>>(out_arr, out_arr, realGridSize);
+    const size_t SHARED_MEMORY_USED = 4 * N * 3 * WARP_SIZE;
+    
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+	uint32_t smCount = prop.multiProcessorCount;
+
+    //first we find the optimal geometry for both kernels: exponentialtion kernel and reduction
+
+  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_recursion, 0, SHARED_MEMORY_USED);
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, naive_multiexp_kernel_block_level_recursion, blockSize, SHARED_MEMORY_USED);
+    maxExpGridSize = maxActiveBlocks * smCount;
+    ExpBlockSize = blockSize;
+
+    //the same routine for reduction phase
+
+    cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_kernel_block_level_reduction, 0, SHARED_MEMORY_USED);
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, naive_kernel_block_level_reduction, blockSize, SHARED_MEMORY_USED);
+    maxReductionGridSize = maxActiveBlocks * smCount;
+    ReductionBlockSize = blockSize;
+
+    //do the first stage:
+
+    realGridSize = (arr_len + ExpBlockSize - 1) / ExpBlockSize;
+    realGridSize = min(realGridSize, maxExpGridSize);
+
+	std::cout << "Real grid size: " << realGridSize << ",  blockSize: " << ExpBlockSize << std::endl;
+	naive_multiexp_kernel_block_level_recursion<<<realGridSize, ExpBlockSize>>>(point_arr, power_arr, out_arr, arr_len);
+
+    //NB: we also use input array as a source for temporary output, so that it's content will be destroyed
+
+    arr_len = realGridSize;
+    ec_point* temp_input_arr = out_arr;
+    ec_point* temp_output_arr = reinterpret_cast<ec_point*>(point_arr);
+    unsigned iter_count = 0;
+
+    while (arr_len > 1)
+    {
+        cudaDeviceSynchronize();
+        std::cout << "iter " << ++iter_count << ", real grid size: " << realGridSize << ",  blockSize: " << ReductionBlockSize << std::endl;
+        realGridSize = (arr_len + ReductionBlockSize - 1) / ReductionBlockSize;
+        realGridSize = min(realGridSize, maxReductionGridSize);
+
+        naive_kernel_block_level_reduction<<<realGridSize, ReductionBlockSize>>>(temp_input_arr, temp_output_arr, arr_len);
+        arr_len = realGridSize;
+
+        //swap arrays
+        ec_point* swapper = temp_input_arr;
+        temp_input_arr = temp_output_arr;
+        temp_output_arr = swapper;
+
+    }
+
+    //copy output to the correct array! (but we are just moving pointers :)
+    out_arr = temp_output_arr;
 }
 
 //Pippenger
@@ -249,78 +316,3 @@ void naive_multiexp_kernel_block_level_recursion_driver(affine_point* point_arr,
 //---------------------------------------------------------------------------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------------------------------------------------------------------------
 
-//Pippenger final exponentiation
-
-__global__ void Pippenger_final_exponentiation(ec_point* in_arr, ec_point* out_arr, size_t arr_len)
-{
-    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-	while (tid < arr_len)
-    {   
-        ec_point pt = in_arr[tid];
-
-        for (size_t j = 0; j < threadIdx.x; j++)
-            pt = ECC_DOUBLE(pt);
-        
-        out_arr[tid] = pt;
-
-        tid += blockDim.x * gridDim.x;
-	}
-}
-
-__global__ void multiexp_Pippenger(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len, int* mutex_arr)
-{
-    ec_point acc = point_at_infty();
-    
-    size_t start = (arr_len / gridDim.x) * blockIdx.x;
-    size_t end = (arr_len / gridDim.x) * (blockIdx.x + 1);
-
-    for (size_t i = start; i < end; i++)
-    {
-        if (get_bit(power_arr[i], threadIdx.x))
-            acc = ECC_MIXED_ADD(acc, point_arr[i]);
-    }
-
-    while (atomicCAS(mutex_arr + threadIdx.x, 0, 1) != 0);
-    out_arr[threadIdx.x] = ECC_ADD(out_arr[threadIdx.x], acc);
-    atomicExch(mutex_arr + threadIdx.x, 0);   
-}
-
-void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
-{
-    int blockSize;
-  	int minGridSize;
-  	int realGridSize;
-
-    size_t M = 256;
-    int* mutex_arr;
-    cudaMalloc((void**)&mutex_arr, sizeof(int) * M);
-    cudaMemset(mutex_arr, 0, sizeof(int) * M);
-
-  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, multiexp_Pippenger, 0, 4 * N * 3 * WARP_SIZE);
-  	realGridSize = (arr_len + blockSize - 1) / blockSize;;
-
-    //but here we need an array of such elements!
-
-    ec_point point_at_infty = { 
-        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
-        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001},
-        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000}
-    };
-
-    for (size_t j = 0 ; j < 256; j++)
-    {
-        cudaMemcpy(out_arr + j, &point_at_infty, sizeof(ec_point), cudaMemcpyHostToDevice);
-    }
-    
-	std::cout << "Real grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;
-
-	multiexp_Pippenger<<<realGridSize, 256>>>(point_arr, power_arr, out_arr, arr_len, mutex_arr);
-    cudaDeviceSynchronize();
-
-    Pippenger_final_exponentiation<<<1, 256>>>(out_arr, out_arr, 256);
-    cudaDeviceSynchronize();
-
-    naive_kernel_block_level_reduction<<<1, 256>>>(out_arr, out_arr, 256);
-
-    cudaFree(mutex_arr);
-}

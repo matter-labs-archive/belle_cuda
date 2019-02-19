@@ -2274,3 +2274,79 @@ z = 0x2ad40110c750927d33d3d5b4a13b7e03a59c7a00a5e6ef0ac622b91a447698c4
 
 
 print Q == curve(x, y, z)
+
+//Pippenger final exponentiation
+
+__global__ void Pippenger_final_exponentiation(ec_point* in_arr, ec_point* out_arr, size_t arr_len)
+{
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+    {   
+        ec_point pt = in_arr[tid];
+
+        for (size_t j = 0; j < threadIdx.x; j++)
+            pt = ECC_DOUBLE(pt);
+        
+        out_arr[tid] = pt;
+
+        tid += blockDim.x * gridDim.x;
+	}
+}
+
+__global__ void multiexp_Pippenger(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len, int* mutex_arr)
+{
+    ec_point acc = point_at_infty();
+    
+    size_t start = (arr_len / gridDim.x) * blockIdx.x;
+    size_t end = (arr_len / gridDim.x) * (blockIdx.x + 1);
+
+    for (size_t i = start; i < end; i++)
+    {
+        if (get_bit(power_arr[i], threadIdx.x))
+            acc = ECC_MIXED_ADD(acc, point_arr[i]);
+    }
+
+    while (atomicCAS(mutex_arr + threadIdx.x, 0, 1) != 0);
+    out_arr[threadIdx.x] = ECC_ADD(out_arr[threadIdx.x], acc);
+    atomicExch(mutex_arr + threadIdx.x, 0);   
+}
+
+void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+{
+    int blockSize;
+  	int minGridSize;
+  	int realGridSize;
+
+    size_t M = 256;
+    int* mutex_arr;
+    cudaMalloc((void**)&mutex_arr, sizeof(int) * M);
+    cudaMemset(mutex_arr, 0, sizeof(int) * M);
+
+  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, multiexp_Pippenger, 0, 4 * N * 3 * WARP_SIZE);
+  	realGridSize = (arr_len + blockSize - 1) / blockSize;;
+
+    //but here we need an array of such elements!
+
+    ec_point point_at_infty = { 
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000}
+    };
+
+    for (size_t j = 0 ; j < 256; j++)
+    {
+        cudaMemcpy(out_arr + j, &point_at_infty, sizeof(ec_point), cudaMemcpyHostToDevice);
+    }
+    
+	std::cout << "Real grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;
+
+	multiexp_Pippenger<<<realGridSize, 256>>>(point_arr, power_arr, out_arr, arr_len, mutex_arr);
+    cudaDeviceSynchronize();
+
+    Pippenger_final_exponentiation<<<1, 256>>>(out_arr, out_arr, 256);
+    cudaDeviceSynchronize();
+
+    naive_kernel_block_level_reduction<<<1, 256>>>(out_arr, out_arr, 256);
+
+    cudaFree(mutex_arr);
+}
