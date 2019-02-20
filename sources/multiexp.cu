@@ -325,8 +325,9 @@ void naive_multiexp_kernel_block_level_recursion_driver(affine_point* point_arr,
 
 //TODO: what is the exact difference between inline and __inline__
 
+#define SMALL_C 8
 #define SMALL_CHUNK_SIZE 256
-#define LARGE_CHUNK_SIZE 256
+#define MAX_POWER_BITLEN 256
 
 DEVICE_FUNC __inline__ void __shfl(const ec_point& in_var, ec_point& out_var, unsigned int mask, unsigned int offset, int width=32)
 {
@@ -342,7 +343,6 @@ DEVICE_FUNC __inline__ void __shfl(const ec_point& in_var, ec_point& out_var, un
         b[i].w = __shfl_sync(mask, a[i].w, offset, width);
     }
 }
-
 
 DEVICE_FUNC __inline__ uint32_t get_peers(uint32_t key)
 {
@@ -465,7 +465,6 @@ DEVICE_FUNC __inline__ ec_point from_affine_point(const affine_point& pt)
     return ec_point{pt.x, pt.y, BASE_FIELD_R};
 }
 
-
 DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* power_arr, 
     size_t arr_start_pos, size_t arr_end_pos, uint chunk_num, ec_point* out_histo_arr)
 {
@@ -518,6 +517,44 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
         idx += blockDim.x;
     }
 }
+
+global void device_level_histo(affine_point* pt_arr, uint256_g* power_arr, ec_point* out_histo, size_t arr_len, uint BLOCKS_PER_BIN)
+{
+    uint chunk_num = blockIdx.x / BLOCKS_PER_BIN;
+
+    uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
+    size_t start_pos = blockIdx.x * ELEMS_PER_BLOCK;
+    size_t end_pos = min(start_pos + ELEMS_PER_BLOCK, arr_len);
+    
+    size_t output_pos = SMALL_CHUNK_SIZE *  blockIdx.x;
+
+    block_level_histo(pt_arr, power_arr, start_pos, end_pos, chunk_num, out_histo + output_pos);
+}
+
+DEVICE_FUNC __inline__ void block_level_histo_shrinking(ec_point* histo_arr, ec_point* shrinked_histo, size_t arr_start_pos, size_t arr_end_pos)
+{
+    ec_point acc = point_at_infty();
+    
+    size_t tid = threadIdx.x + arr_start_pos;
+	while (tid < arr_end_pos)
+	{   
+        acc = ECC_ADD(acc, histo_arr[tid]);
+        tid += blockDim.x;
+	}
+
+    shrinked_histo[threadIdx.x] = acc;
+}
+
+__global__ void shrink_histo(const ec_point* local_histo_arr, ec_point* shrinked_histo, size_t BLOCKS_PER_BIN)
+{
+    uint ELEMS_PER_BLOCK = SMALL_CHUNK_SIZE * BLOCKS_PER_BIN;
+    size_t start_pos = blockIdx.x * ELEMS_PER_BLOCK;
+    size_t end_pos = start_pos + ELEMS_PER_BLOCK;
+    
+    size_t output_pos = SMALL_CHUNK_SIZE *  blockIdx.x;
+
+    block_level_histo_shrinking(local_histo_arr, shrinked_histo + output_pos, start_pos, end_pos);
+} 
 
 //Another important part of Pippenger algorithm is the evaluation of Rolling sum - we use the combination of scan + reduction primitives
 //We do also try to avoid bank conflicts (although it sounds like a sort of some weird magic)
@@ -600,6 +637,9 @@ __global__ void block_prescan(const ec_point* in_arr, ec_point* out_arr, ec_poin
 
 //Pippenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
 
+#define PIPPENGER_BLOCK_SIZE 256
+#define PIPPENGER_GRID_SIZE 256
+
 void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out, size_t arr_len)
 {
     int blockSize;
@@ -611,66 +651,19 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
     cudaGetDeviceProperties(&prop, 0);
 	uint32_t smCount = prop.multiProcessorCount;
 
-    //first - stage: splitting into bins
+    //first stage: splitting into bins
+    //we start by finding the optimal geometry
 
+     constexpr uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / SMALL_C;
+    uint BLOCKS_PER_BIN = GridDim.x / NUM_OF_CHUNKS;
 
+    uint chunk_num = blockIdx.x / BLOCKS_PER_BIN;
 
-
-//Bitonic Sort
-//------------------------------------------------------------------------------------------------------------------------------------------
-//TODO: may be better and simpler to use CUB library? (it contains primitives for sorting)
-
-__global__ void bitonic_sort_step(ec_point* values, int j, int k)
-{
-  unsigned int i, ixj; /* Sorting partners: i and ixj */
-  i = threadIdx.x + blockDim.x * blockIdx.x;
-  ixj = i^j;
-
-  /* The threads with the lowest ids sort the array. */
-  if ((ixj)>i) {
-    if ((i&k)==0) {
-      /* Sort ascending */
-      if (dev_values[i]>dev_values[ixj]) {
-        /* exchange(i,ixj); */
-        float temp = dev_values[i];
-        dev_values[i] = dev_values[ixj];
-        dev_values[ixj] = temp;
-      }
-    }
-    if ((i&k)!=0) {
-      /* Sort descending */
-      if (dev_values[i]<dev_values[ixj]) {
-        /* exchange(i,ixj); */
-        float temp = dev_values[i];
-        dev_values[i] = dev_values[ixj];
-        dev_values[ixj] = temp;
-      }
-    }
-  }
-}
-
-void bitonic_sort(float *values)
-{
-  float *dev_values;
-  size_t size = NUM_VALS * sizeof(float);
-
-  cudaMalloc((void**) &dev_values, size);
-  cudaMemcpy(dev_values, values, size, cudaMemcpyHostToDevice);
-
-  dim3 blocks(BLOCKS,1);    /* Number of blocks   */
-  dim3 threads(THREADS,1);  /* Number of threads  */
-
-  int j, k;
-  /* Major step */
-  for (k = 2; k <= NUM_VALS; k <<= 1) {
-    /* Minor step */
-    for (j=k>>1; j>0; j=j>>1) {
-      bitonic_sort_step<<<blocks, threads>>>(dev_values, j, k);
-    }
-  }
-  cudaMemcpy(values, dev_values, size, cudaMemcpyDeviceToHost);
-  cudaFree(dev_values);
-}
+    uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
+    size_t start_pos = blockIdx.x * ELEMS_PER_BLOCK;
+    size_t end_pos = min(start_pos + ELEMS_PER_BLOCK, arr_len);
+    
+    size_t output_pos = SMALL_CHUNK_SIZE *  blockIdx.x;
 
 
 

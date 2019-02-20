@@ -2260,3 +2260,70 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
 
     cudaFree(mutex_arr);
 }
+
+
+
+//Bitonic Sort
+//------------------------------------------------------------------------------------------------------------------------------------------
+//TODO: may be better and simpler to use CUB library? (it contains primitives for sorting)
+
+
+#define LARGE_C 8
+#define LARGE_CHUNK_SIZE ()
+
+__global__ void bitonic_sort_step(ec_point* values, int j, int k)
+{
+  unsigned int i, ixj; /* Sorting partners: i and ixj */
+  i = threadIdx.x + blockDim.x * blockIdx.x;
+  ixj = i^j;
+
+  /* The threads with the lowest ids sort the array. */
+  if ((ixj)>i) {
+    if ((i&k)==0) {
+      /* Sort ascending */
+      if (dev_values[i]>dev_values[ixj]) {
+        /* exchange(i,ixj); */
+        float temp = dev_values[i];
+        dev_values[i] = dev_values[ixj];
+        dev_values[ixj] = temp;
+      }
+    }
+    if ((i&k)!=0) {
+      /* Sort descending */
+      if (dev_values[i]<dev_values[ixj]) {
+        /* exchange(i,ixj); */
+        float temp = dev_values[i];
+        dev_values[i] = dev_values[ixj];
+        dev_values[ixj] = temp;
+      }
+    }
+  }
+}
+
+
+
+void bitonic_sort(float *values)
+{
+  float *dev_values;
+  size_t size = NUM_VALS * sizeof(float);
+
+  cudaMalloc((void**) &dev_values, size);
+  cudaMemcpy(dev_values, values, size, cudaMemcpyHostToDevice);
+
+  dim3 blocks(BLOCKS,1);    /* Number of blocks   */
+  dim3 threads(THREADS,1);  /* Number of threads  */
+
+  int j, k;
+  /* Major step */
+  for (k = 2; k <= NUM_VALS; k <<= 1) {
+    /* Minor step */
+    for (j=k>>1; j>0; j=j>>1) {
+      bitonic_sort_step<<<blocks, threads>>>(dev_values, j, k);
+    }
+  }
+  cudaMemcpy(values, dev_values, size, cudaMemcpyDeviceToHost);
+  cudaFree(dev_values);
+}
+
+
+
