@@ -26,6 +26,7 @@
 #define N_DOUBLED 16
 #define N_BITLEN 254
 #define R_LOG 256
+#define BITS_PER_LIMB 32
 
 #define USE_PROJECTIVE_COORDINATES
 

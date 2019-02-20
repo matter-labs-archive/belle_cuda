@@ -316,3 +316,364 @@ void naive_multiexp_kernel_block_level_recursion_driver(affine_point* point_arr,
 //---------------------------------------------------------------------------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------------------------------------------------------------------------
 
+//the main stage of Pippenger algorithm is splitting a lot op points among a relatively small amount of chunks (or bins)
+//This operation can be considered as a sort of histogram construction, so we can use specific Cuda algorithms.
+//Source of inspiration are: 
+//https://devblogs.nvidia.com/voting-and-shuffling-optimize-atomic-operations/
+//https://devblogs.nvidia.com/gpu-pro-tip-fast-histograms-using-shared-atomics-maxwell/
+//https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch39.html
+
+//TODO: what is the exact difference between inline and __inline__
+
+#define SMALL_CHUNK_SIZE 256
+#define LARGE_CHUNK_SIZE 256
+
+DEVICE_FUNC __inline__ void __shfl(const ec_point& in_var, ec_point& out_var, unsigned int mask, unsigned int offset, int width=32)
+{
+    //ec_point = 3 * 8  = 24 int = 6 int4
+    const int4* a = reinterpret_cast<const int4*>(&in_var);
+    int4* b = reinterpret_cast<int4*>(&out_var);
+
+    for (unsigned i = 0; i < 6; i++)
+    {
+        b[i].x = __shfl_sync(mask, a[i].x, offset, width);
+        b[i].y = __shfl_sync(mask, a[i].y, offset, width);
+        b[i].z = __shfl_sync(mask, a[i].z, offset, width);
+        b[i].w = __shfl_sync(mask, a[i].w, offset, width);
+    }
+}
+
+
+DEVICE_FUNC __inline__ uint32_t get_peers(uint32_t key)
+{
+    uint32_t peers=0;
+    bool is_peer;
+
+    // in the beginning, all lanes are available
+    uint32_t unclaimed=0xffffffff;
+
+    do
+    {
+        // fetch key of first unclaimed lane and compare with this key
+        is_peer = (key == __shfl_sync(unclaimed, key, __ffs(unclaimed) - 1));
+
+        // determine which lanes had a match
+        peers = __ballot_sync(unclaimed, is_peer);
+
+        // remove lanes with matching keys from the pool
+        unclaimed ^= peers;
+
+
+    }
+    // quit if we had a match
+    while (!is_peer);
+
+    return peers;
+}
+
+//returns the index of leader peer
+
+DEVICE_FUNC __inline__ uint reduce_peers(uint peers, ec_point& pt)
+{
+    int lane = threadIdx.x & (warpSize - 1);
+
+    // find the peer with lowest lane index
+    uint first = __ffs(peers)-1;
+
+    // calculate own relative position among peers
+    int rel_pos = __popc(peers << (32 - lane));
+
+    // ignore peers with lower (or same) lane index
+    peers &= (0xfffffffe << lane);
+
+    while(__any_sync(peers, peers))
+    {
+        // find next-highest remaining peer
+        int next = __ffs(peers);
+
+        // __shfl() only works if both threads participate, so we always do.
+        ec_point temp;
+        __shfl(pt, temp, peers, next - 1);
+
+        // only add if there was anything to add
+        if (next)
+        {
+            pt = ECC_ADD(pt, temp);
+        }
+
+        // all lanes with their least significant index bit set are done
+        uint32_t done = rel_pos & 1;
+
+        // remove all peers that are already done
+        peers &= ~ __ballot_sync(peers, done);
+
+        // abuse relative position as iteration counter
+        rel_pos >>= 1;
+    }
+
+    return first;
+}
+
+
+struct Lock
+{
+    int mutex;
+
+    Lock() {} 
+    ~Lock() = default;
+
+    DEVICE_FUNC void init()
+    {
+        mutex = 0;
+    }
+    
+    DEVICE_FUNC void lock()
+    {
+        while (atomicCAS(&mutex, 0, 1) != 0);
+    }
+
+    DEVICE_FUNC void unlock()
+    {
+        atomicExch(&mutex, 0);
+    }
+};
+
+struct Bin
+{
+    Lock lock;
+    ec_point pt;
+};
+
+
+DEVICE_FUNC __inline__ uint get_key(const uint256_g& val, uint chunk_num)
+{
+    uint bit_pos = chunk_num * SMALL_CHUNK_SIZE;
+    uint limb_idx = bit_pos / BITS_PER_LIMB;
+    uint offset = bit_pos % BITS_PER_LIMB;
+
+    uint low_part = val.n[limb_idx];
+    uint high_part = (limb_idx < N - 1 ? val.n[limb_idx + 1] : 0);
+
+    uint res = __funnelshift_r(low, high, offset);
+    res &= (1 << SMALL_CHUNK_SIZE) - 1;
+
+    return res;   
+}
+
+DEVICE_FUNC __inline__ ec_point from_affine_point(const affine_point& pt)
+{
+    return ec_point{pt.x, pt.y, BASE_FIELD_R};
+}
+
+
+DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* power_arr, 
+    size_t arr_start_pos, size_t arr_end_pos, uint chunk_num, ec_point* out_histo_arr)
+{
+    //we exclude the bin corresponding to value 0
+    
+    static __shared__ Bin bins[SMALL_CHUNK_SIZE]; 
+    uint lane = threadIdx.x % warpSize;
+    uint wid = threadIdx.x / warpSize;
+    
+    //first we need to init all bins
+
+    size_t idx = threadIdx.x;
+    while (idx < SMALL_CHUNK_SIZE)
+    {
+        bins[idx].lock.init()
+        bins[idx].pt = point_at_infty();
+        idx += blockDim.x;
+    }
+
+    __syncthreads();
+
+    idx = arr_start_pos + threadId.x;
+    while (idx < arr_end_pos)
+    {
+        ec_point pt = from_affine_point(pt_arr[idx]);
+        uint key = get_key(power_arr[idx], chunk_num);
+
+        if (key > 0)
+        {
+            uint peers = get_peers(key);
+            uint leader = reduce_peers(peers, pt);
+
+            if (wid == leader)
+            {
+                bins[key].lock.lock();
+                bins[key].pt = ECC_ADD(pt, bins[key].pt);
+                bins[key].lock.unlock();
+            }
+        }
+
+        idx += blockDim.x;
+    }
+
+    __syncthreads();
+
+    size_t idx = threadIdx.x;
+    while (idx < SMALL_CHUNK_SIZE)
+    {
+        out[idx] = bins[idx].pt;
+        idx += blockDim.x;
+    }
+}
+
+//Another important part of Pippenger algorithm is the evaluation of Rolling sum - we use the combination of scan + reduction primitives
+//We do also try to avoid bank conflicts (although it sounds like a sort of some weird magic)
+
+#define NUM_BANKS 16
+#define LOG_NUM_BANKS 4
+#ifdef ZERO_BANK_CONFLICTS
+#define CONFLICT_FREE_OFFSET(n) ((n) >> NUM_BANKS + (n) >> (2 * LOG_NUM_BANKS))
+#else
+#define CONFLICT_FREE_OFFSET(n) ((n) >> LOG_NUM_BANKS)
+#endif
+
+//NB: arr_len should be a power of two
+
+__global__ void block_prescan(const ec_point* in_arr, ec_point* out_arr, ec_point* block_sums, size_t arr_len)
+{
+    __shared__ ec_point temp[];
+    uint tid = threadIdx.x;
+    uint offset = 1;
+
+    uint ai = tid;
+    uint bi = thid + (arr_len / 2);
+    uint bankOffsetA = CONFLICT_FREE_OFFSET(ai);
+    uint bankOffsetB = CONFLICT_FREE_OFFSET(ai);
+    temp[ai + bankOffsetA] = in_arr[ai];
+    temp[bi + bankOffsetB] = in_arr[bi]; 
+
+    for (int d = arr_len >> 1; d > 0; d >>= 1) // build sum in place up the tree
+    {
+        __syncthreads();
+        if (thd < d)
+        {
+            uint ai = offset * (2 * tid+1)-1;
+            uint bi = offset*(2*thid+2)-1;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi); 
+
+            temp[bi] = ECC_ADD(temp[ai], temp[bi]);
+        }
+        offset *= 2;
+    }
+    
+    if (tid==0)
+    {
+        temp[arr_len - 1 + CONFLICT_FREE_OFFSET(arr_len - 1)] = 0;
+    }
+
+    // traverse down tree & build scan
+    for (uint d = 1; d < arr_len; d *= 2) 
+    {
+        offset >>= 1;
+        __syncthreads();
+        if (thd < d)
+        {
+            uint ai = offset * (2 * tid+1)-1;
+            int bi = offset*(2*thid+2)-1;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi); 
+            ec_point t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] = ECC_ADD(t, temp[bi]);
+        }
+    }
+    
+    __syncthreads();
+   
+    out_arr[ai] = out_arr[ai + bankOffsetA];
+    out_arr[bi] = temp[bi + bankOffsetB];
+
+    if (tid==0)
+    {
+
+    }
+}
+
+//scan of large arrays :()
+
+
+//third step - reduction of rolling sum
+
+//Pippenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
+
+void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out, size_t arr_len)
+{
+    int blockSize;
+  	int minGridSize;
+  	int realGridSize;
+    int maxActiveBlocks;
+
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+	uint32_t smCount = prop.multiProcessorCount;
+
+    //first - stage: splitting into bins
+
+
+
+
+//Bitonic Sort
+//------------------------------------------------------------------------------------------------------------------------------------------
+//TODO: may be better and simpler to use CUB library? (it contains primitives for sorting)
+
+__global__ void bitonic_sort_step(ec_point* values, int j, int k)
+{
+  unsigned int i, ixj; /* Sorting partners: i and ixj */
+  i = threadIdx.x + blockDim.x * blockIdx.x;
+  ixj = i^j;
+
+  /* The threads with the lowest ids sort the array. */
+  if ((ixj)>i) {
+    if ((i&k)==0) {
+      /* Sort ascending */
+      if (dev_values[i]>dev_values[ixj]) {
+        /* exchange(i,ixj); */
+        float temp = dev_values[i];
+        dev_values[i] = dev_values[ixj];
+        dev_values[ixj] = temp;
+      }
+    }
+    if ((i&k)!=0) {
+      /* Sort descending */
+      if (dev_values[i]<dev_values[ixj]) {
+        /* exchange(i,ixj); */
+        float temp = dev_values[i];
+        dev_values[i] = dev_values[ixj];
+        dev_values[ixj] = temp;
+      }
+    }
+  }
+}
+
+void bitonic_sort(float *values)
+{
+  float *dev_values;
+  size_t size = NUM_VALS * sizeof(float);
+
+  cudaMalloc((void**) &dev_values, size);
+  cudaMemcpy(dev_values, values, size, cudaMemcpyHostToDevice);
+
+  dim3 blocks(BLOCKS,1);    /* Number of blocks   */
+  dim3 threads(THREADS,1);  /* Number of threads  */
+
+  int j, k;
+  /* Major step */
+  for (k = 2; k <= NUM_VALS; k <<= 1) {
+    /* Minor step */
+    for (j=k>>1; j>0; j=j>>1) {
+      bitonic_sort_step<<<blocks, threads>>>(dev_values, j, k);
+    }
+  }
+  cudaMemcpy(values, dev_values, size, cudaMemcpyDeviceToHost);
+  cudaFree(dev_values);
+}
+
+
+
+
+
+
