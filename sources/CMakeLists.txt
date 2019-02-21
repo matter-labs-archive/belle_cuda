@@ -3,7 +3,7 @@ add_executable(cuda_benches main.cu basic_arithmetic.cu constants.cu kernels.cu 
 target_compile_features(cuda_benches PUBLIC cxx_std_14)
 
 #target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES)
-ZERO_BANK_CONFLICTS
+target_compile_definitions(cuda_benches PRIVATE ZERO_BANK_CONFLICTS)
  
 # We need to explicitly state that we need all CUDA files in the 
 # particle library to be built with -dc as the member functions 

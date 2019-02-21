@@ -2324,5 +2324,8 @@ void bitonic_sort(float *values)
   cudaFree(dev_values);
 }
 
+//scan of large arrays :()
 
+
+//third step - reduction of rolling sum
 
