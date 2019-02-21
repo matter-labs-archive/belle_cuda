@@ -465,6 +465,8 @@ DEVICE_FUNC __inline__ ec_point from_affine_point(const affine_point& pt)
     return ec_point{pt.x, pt.y, BASE_FIELD_R};
 }
 
+#define REVERSE_INDEX(index, max_index) (max_index - index - 1)
+
 DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* power_arr, 
     size_t arr_start_pos, size_t arr_end_pos, uint chunk_num, ec_point* out_histo_arr)
 {
@@ -499,9 +501,10 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
 
             if (wid == leader)
             {
-                bins[key].lock.lock();
-                bins[key].pt = ECC_ADD(pt, bins[key].pt);
-                bins[key].lock.unlock();
+                uint real_key = REVERSE_INDEX(key, SMALL_CHUNK_SIZE);
+                bins[real_key].lock.lock();
+                bins[real_key].pt = ECC_ADD(pt, bins[real_key].pt);
+                bins[real_key].lock.unlock();
             }
         }
 
@@ -567,28 +570,36 @@ __global__ void shrink_histo(const ec_point* local_histo_arr, ec_point* shrinked
 #define CONFLICT_FREE_OFFSET(n) ((n) >> LOG_NUM_BANKS)
 #endif
 
-//NB: arr_len should be a power of two
 
-__global__ void block_prescan(const ec_point* in_arr, ec_point* out_arr, ec_point* block_sums, size_t arr_len)
+//NB: arr_len should be a power of two
+//TBD: implement comflict free offsets
+
+__global__ void block_scan_and_reduce(const ec_point* in_arr, ec_point* out, ec_point* block_sums)
 {
-    __shared__ ec_point temp[];
+    // allocated on invocation
+    extern __shared__ ec_point temp[];
+
+    //scanning
+
     uint tid = threadIdx.x;
     uint offset = 1;
 
     uint ai = tid;
-    uint bi = thid + (arr_len / 2);
+    uint bi = tid + (SMALL_CHUNK_SIZE / 2);
+
     uint bankOffsetA = CONFLICT_FREE_OFFSET(ai);
     uint bankOffsetB = CONFLICT_FREE_OFFSET(ai);
     temp[ai + bankOffsetA] = in_arr[ai];
     temp[bi + bankOffsetB] = in_arr[bi]; 
 
-    for (int d = arr_len >> 1; d > 0; d >>= 1) // build sum in place up the tree
+    // build sum in place up the tree
+    for (int d = SMALL_CHUNK_SIZE >> 1; d > 0; d >>= 1) 
     {
         __syncthreads();
         if (thd < d)
         {
-            uint ai = offset * (2 * tid+1)-1;
-            uint bi = offset*(2*thid+2)-1;
+            uint ai = offset * (2 * tid + 1) - 1;
+            uint bi = offset*(2 * tid + 2) - 1;
             ai += CONFLICT_FREE_OFFSET(ai);
             bi += CONFLICT_FREE_OFFSET(bi); 
 
@@ -597,22 +608,24 @@ __global__ void block_prescan(const ec_point* in_arr, ec_point* out_arr, ec_poin
         offset *= 2;
     }
     
-    if (tid==0)
+    if (tid == 0)
     {
-        temp[arr_len - 1 + CONFLICT_FREE_OFFSET(arr_len - 1)] = 0;
+        temp[SMALL_CHUNK_SIZE - 1 + CONFLICT_FREE_OFFSET(SMALL_CHUNK_SIZE - 1)] = 0;
     }
 
     // traverse down tree & build scan
-    for (uint d = 1; d < arr_len; d *= 2) 
+    for (uint d = 1; d < SMALL_CHUNK_SIZE; d *= 2) 
     {
         offset >>= 1;
         __syncthreads();
-        if (thd < d)
+        if (tid < d)
         {
-            uint ai = offset * (2 * tid+1)-1;
-            int bi = offset*(2*thid+2)-1;
+            uint ai = offset * (2 * tid + 1) - 1;
+            int bi = offset * (2 * tid + 2) - 1;
+            
             ai += CONFLICT_FREE_OFFSET(ai);
             bi += CONFLICT_FREE_OFFSET(bi); 
+            
             ec_point t = temp[ai];
             temp[ai] = temp[bi];
             temp[bi] = ECC_ADD(t, temp[bi]);
@@ -621,19 +634,19 @@ __global__ void block_prescan(const ec_point* in_arr, ec_point* out_arr, ec_poin
     
     __syncthreads();
    
-    out_arr[ai] = out_arr[ai + bankOffsetA];
-    out_arr[bi] = temp[bi + bankOffsetB];
+    //reducing
 
-    if (tid==0)
+    for (int d = SMALL_CHUNK_SIZE >> 1; d > 0; d >>= 1)
     {
-
+        if (tid < d)
+            temp[tid] = temp[tid + d];
+        __syncthreads();
     }
+
+    if (tid == 0)
+        *out = temp[0];
 }
 
-//scan of large arrays :()
-
-
-//third step - reduction of rolling sum
 
 //Pippenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
 
@@ -651,8 +664,10 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
     cudaGetDeviceProperties(&prop, 0);
 	uint32_t smCount = prop.multiProcessorCount;
 
-    //first stage: splitting into bins
-    //we start by finding the optimal geometry
+    //we start by finding the optimal geometry and grid size
+
+    realGridSize = (arr_len + ExpBlockSize - 1) / ExpBlockSize;
+    realGridSize = min(realGridSize, maxExpGridSize);
 
      constexpr uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / SMALL_C;
     uint BLOCKS_PER_BIN = GridDim.x / NUM_OF_CHUNKS;

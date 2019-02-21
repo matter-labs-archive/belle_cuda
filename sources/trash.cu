@@ -2262,7 +2262,6 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
 }
 
 
-
 //Bitonic Sort
 //------------------------------------------------------------------------------------------------------------------------------------------
 //TODO: may be better and simpler to use CUB library? (it contains primitives for sorting)
