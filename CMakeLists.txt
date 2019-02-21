@@ -16,6 +16,5 @@ else()
 endif()
 
 
-
 include_directories(include)
 add_subdirectory(sources)

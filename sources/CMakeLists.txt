@@ -10,6 +10,8 @@ target_compile_definitions(cuda_benches PRIVATE ZERO_BANK_CONFLICTS)
 # could be called by other libraries and executables
 set_target_properties(cuda_benches PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
+target_include_directories(cuda_benches PRIVATE ${PROJECT_SOURCE_DIR}/depends/CUB)
+
 #Checking all of the routines for correctness
 option(WITH_CORRECTNESS_CHECK "check correctness of all routines" OFF)
 

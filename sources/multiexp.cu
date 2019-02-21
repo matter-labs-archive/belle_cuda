@@ -670,7 +670,6 @@ __global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
 //Pippenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
 
 
-
 void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
 {
   	//NB: gridSize should be a power of two
@@ -701,7 +700,7 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
     //calculate kernel run parameteres
  
     uint BLOCKS_PER_BIN = gridSize / NUM_OF_CHUNKS;
-    uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
+    //uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
 
     //allocate memory for temporary array of needed
 
@@ -726,4 +725,75 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
 
     cudaFree(histo_arr);
 }
+
+
+//Some experiements with CUB library
+//----------------------------------------------------------------------------------------------------------------------------------------------
+
+//Do not compile: may be I should ask on stackoverflow?
+
+#ifdef OLOLO_TROLOLO
+
+#include <cub/cub.cuh>   
+
+struct ec_point_adder_t
+{
+    DEVICE_FUNC __forceinline__
+    ec_point operator()(const ec_point& a, const ec_point& b) const
+    {
+        return ECC_ADD(a, b);
+    }
+};
+
+__global__ void exp_componentwise(const affine_point* point_arr, const uint256_g* power_arr, ec_point* out, size_t arr_len)
+{
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+	{   
+        out[tid] = ECC_EXP(point_arr[tid], power_arr[tid]);
+        tid += blockDim.x * gridDim.x;
+	} 
+}
+
+void CUB_reduce_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+{
+    int blockSize;
+  	int minGridSize;
+  	int realGridSize;
+    int maxActiveBlocks;
+
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+	uint32_t smCount = prop.multiProcessorCount;
+
+  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, exp_componentwise, 0, 0);
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, exp_componentwise, blockSize, 0);
+
+    realGridSize = (arr_len + blockSize - 1) / blockSize;
+    realGridSize = min(realGridSize, maxActiveBlocks * smCount);
+      
+    void* d_temp_storage = nullptr;
+    size_t temp_storage_bytes = 0;
+    ec_point_adder_t ec_point_adder;
+
+     ec_point infty = { 
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001},
+        {0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000}
+    };
+
+
+    cub::DeviceReduce::Reduce(d_temp_storage, temp_storage_bytes, out_arr, out_arr, arr_len, ec_point_adder, infty);
+
+    // Allocate temporary storage
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    // Run reduction
+    //cub::DeviceReduce::Reduce(d_temp_storage, temp_storage_bytes,  out_arr, out_arr, arr_len, ec_point_adder, point_at_infty());
+
+    cudaFree(d_temp_storage);
+}
+
+#endif
+
+
 

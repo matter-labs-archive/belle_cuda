@@ -1,3 +1,6 @@
 [submodule "depends/catch"]
 	path = depends/catch
 	url = https://github.com/catchorg/Catch2.git
+[submodule "depends/CUB"]
+	path = depends/CUB
+	url = https://github.com/NVlabs/cub
