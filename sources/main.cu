@@ -408,7 +408,7 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t bench_len = 256;
+size_t bench_len = 10000000;
 //size_t bench_len = 3;
 
 int main(int argc, char* argv[])
@@ -456,7 +456,7 @@ int main(int argc, char* argv[])
     // gpu_benchmark(affine_exp_curve_point_bench, bench_len);
 
     std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    gpu_benchmark(multiexp_curve_point_bench, bench_len, true);
+    gpu_benchmark(multiexp_curve_point_bench, bench_len);
 
     return 0;
 }

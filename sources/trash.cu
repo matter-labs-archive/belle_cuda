@@ -2329,3 +2329,157 @@ void bitonic_sort(float *values)
 
 //third step - reduction of rolling sum
 
+
+//This is a version of Pippenger algorithm with large bins
+//------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------
+
+#define LARGE_C 16
+#define LARGE_CHUNK_SIZE 256
+
+__global__ void bitonic_sort_step(ec_point* values, int j, int k)
+{
+    /* Sorting partners: i and ixj */
+    unsigned int i, ixj; 
+    i = threadIdx.x + blockDim.x * blockIdx.x;
+    ixj = i^j;
+
+    /* The threads with the lowest ids sort the array. */
+    if (ixj > i)
+    {
+        if ( (i & k ) == 0 )
+        {
+            /* Sort ascending */
+            if (dev_values[i]>dev_values[ixj])
+            {
+                /* exchange(i,ixj); */
+                float temp = dev_values[i];
+                dev_values[i] = dev_values[ixj];
+                dev_values[ixj] = temp;
+            }
+        }
+        if ((i&k)!=0)
+        {
+            /* Sort descending */
+            if (dev_values[i]<dev_values[ixj])
+            {
+                /* exchange(i,ixj); */
+                float temp = dev_values[i];
+                dev_values[i] = dev_values[ixj];
+                dev_values[ixj] = temp;
+            }
+        }
+    }
+}
+
+void bitonic_sort(ec_point* values)
+{
+    float *dev_values;
+    size_t size = NUM_VALS * sizeof(float);
+
+    cudaMalloc((void**) &dev_values, size);
+    cudaMemcpy(dev_values, values, size, cudaMemcpyHostToDevice);
+
+    dim3 blocks(BLOCKS,1);    /* Number of blocks   */
+    dim3 threads(THREADS,1);  /* Number of threads  */
+
+    int j, k;
+    /* Major step */
+    for (k = 2; k <= NUM_VALS; k <<= 1)
+    {
+        /* Minor step */
+        for (j=k>>1; j>0; j=j>>1)
+        {
+            bitonic_sort_step<<<blocks, threads>>>(dev_values, j, k);
+        }
+    }
+    cudaMemcpy(values, dev_values, size, cudaMemcpyDeviceToHost);
+    cudaFree(dev_values);
+}
+
+__global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
+{
+    // allocated on invocation
+    extern __shared__ ec_point temp[];
+
+    //scanning
+
+    uint tid = threadIdx.x;
+    uint offset = 1;
+    const ec_point* in_arr = global_in_arr + blockIdx.x * SMALL_CHUNK_SIZE;
+
+    uint ai = tid;
+    uint bi = tid + (SMALL_CHUNK_SIZE / 2);
+
+    uint bankOffsetA = CONFLICT_FREE_OFFSET(ai);
+    uint bankOffsetB = CONFLICT_FREE_OFFSET(ai);
+    temp[ai + bankOffsetA] = in_arr[ai];
+    temp[bi + bankOffsetB] = in_arr[bi]; 
+
+    // build sum in place up the tree
+    for (int d = SMALL_CHUNK_SIZE >> 1; d > 0; d >>= 1) 
+    {
+        __syncthreads();
+        if (tid < d)
+        {
+            uint ai = offset * (2 * tid + 1) - 1;
+            uint bi = offset*(2 * tid + 2) - 1;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi); 
+
+            temp[bi] = ECC_ADD(temp[ai], temp[bi]);
+        }
+        offset *= 2;
+    }
+    
+    if (tid == 0)
+    {
+        temp[SMALL_CHUNK_SIZE - 1 + CONFLICT_FREE_OFFSET(SMALL_CHUNK_SIZE - 1)] = point_at_infty();
+    }
+
+    // traverse down tree & build scan
+    for (uint d = 1; d < SMALL_CHUNK_SIZE; d *= 2) 
+    {
+        offset >>= 1;
+        __syncthreads();
+        if (tid < d)
+        {
+            uint ai = offset * (2 * tid + 1) - 1;
+            int bi = offset * (2 * tid + 2) - 1;
+            
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi); 
+            
+            ec_point t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] = ECC_ADD(t, temp[bi]);
+        }
+    }
+    
+    __syncthreads();
+   
+    //reducing
+
+    for (int d = SMALL_CHUNK_SIZE >> 1; d > 0; d >>= 1)
+    {
+        if (tid < d)
+            temp[tid] = temp[tid + d];
+        __syncthreads();
+    }
+
+    if (tid == 0)
+        out[blockIdx.x * SMALL_CHUNK_SIZE] = temp[0];
+}
+
+
+
+
+
+
+
+
+
+
+
+

@@ -477,7 +477,7 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
 {
     //we exclude the bin corresponding to value 0
     
-    static __shared__ Bin bins[SMALL_CHUNK_SIZE]; 
+    __shared__ Bin bins[SMALL_CHUNK_SIZE]; 
     uint lane = threadIdx.x % WARP_SIZE;
     
     //first we need to init all bins
@@ -492,48 +492,38 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
 
     __syncthreads();
 
-
-
-
     idx = arr_start_pos + threadIdx.x;
     while (idx < arr_end_pos)
     {
         ec_point pt = from_affine_point(pt_arr[idx]);
         uint key = get_key(power_arr[idx], chunk_num);
 
-        if (key > 0)
+        uint peers = get_peers(key);
+        uint leader = reduce_peers(peers, pt);
+        
+        if (lane == leader)
         {
-            uint peers = get_peers(key);
-            uint leader = reduce_peers(peers, pt);
+            uint real_key = REVERSE_INDEX(key, SMALL_CHUNK_SIZE);
 
-            if ((lane == leader) && (threadIdx.x < 32) && (blockIdx.x == 0))
+            bool leaveLoop = false;
+            while (!leaveLoop)
             {
-                printf("lane: %d\n", lane);
-                uint real_key = REVERSE_INDEX(key, SMALL_CHUNK_SIZE);
-
-                // bool leaveLoop = false;
-                // while (!leaveLoop)
-                // {
-                //     if (true)
-                //     {
-                //         //critical section
-                //         printf("lane: %d inside!\n", lane);
-                //         bins[real_key].pt = ECC_ADD(pt, bins[real_key].pt);
-                //         leaveLoop = true;
-                //         //bins[real_key].lock.unlock();
-                //     }
-                // }
-                
+                if ( bins[real_key].lock.try_lock())
+                {
+                    //critical section
+                    bins[real_key].pt = ECC_ADD(pt, bins[real_key].pt);
+                    leaveLoop = true;
+                    bins[real_key].lock.unlock();
+                    
+                }
+                __threadfence_block();
+                //printf("here\n");
             }
+            
         }
-        //__syncthreads();
-        if ((threadIdx.x < 32) && (blockIdx.x == 0))
-            printf("lane: %d outside\n", lane);
+
         idx += blockDim.x;
     }
-
-     if ((threadIdx.x < 32) && (blockIdx.x == 0))
-            printf("lane: %d outside2\n", lane);
 
     __syncthreads();
 
@@ -543,8 +533,6 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
         out_histo_arr[idx] = bins[idx].pt;
         idx += blockDim.x;
     }
-    if ((threadIdx.x < 32) && (blockIdx.x == 0))
-        printf("lane: %d end\n", lane);
 }
 
 __global__ void device_level_histo(affine_point* pt_arr, uint256_g* power_arr, ec_point* out_histo, size_t arr_len, uint BLOCKS_PER_BIN)
@@ -602,10 +590,12 @@ __global__ void shrink_histo(const ec_point* local_histo_arr, ec_point* shrinked
 //NB: arr_len should be a power of two
 //TBD: implement comflict free offsets
 
+#define PIPPENGER_BLOCK_SIZE 256
+
 __global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
 {
     // allocated on invocation
-    extern __shared__ ec_point temp[];
+    __shared__ ec_point temp[PIPPENGER_BLOCK_SIZE * 2];
 
     //scanning
 
@@ -679,7 +669,7 @@ __global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
 
 //Pippenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
 
-#define PIPPENGER_BLOCK_SIZE 256
+
 
 void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
 {
@@ -726,18 +716,14 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
 
     gridSize = NUM_OF_CHUNKS;
     device_level_histo<<<gridSize, PIPPENGER_BLOCK_SIZE>>>(point_arr, power_arr, histo_arr, arr_len, BLOCKS_PER_BIN);
-    printf("here\n");
+   
     cudaDeviceSynchronize();
-    printf("here\n");
 
-    // shrink_histo<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE>>>(histo_arr, out_arr, BLOCKS_PER_BIN);
-    // scan_and_reduce<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE, PIPPENGER_BLOCK_SIZE * 2 + PIPPENGER_BLOCK_SIZE / 8>>>(out_arr, out_arr);
+    shrink_histo<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE>>>(histo_arr, out_arr, BLOCKS_PER_BIN);
+    cudaDeviceSynchronize();
 
-    // cudaFree(histo_arr);
+    scan_and_reduce<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE>>>(out_arr, out_arr);
+
+    cudaFree(histo_arr);
 }
-
-
-
-
-
 
