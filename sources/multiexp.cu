@@ -460,7 +460,7 @@ struct Bin
 
 DEVICE_FUNC __inline__ uint get_key(const uint256_g& val, uint chunk_num)
 {
-    uint bit_pos = chunk_num * SMALL_CHUNK_SIZE;
+    uint bit_pos = chunk_num * SMALL_C;
     uint limb_idx = bit_pos / BITS_PER_LIMB;
     uint offset = bit_pos % BITS_PER_LIMB;
 
@@ -545,10 +545,12 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
 
 __global__ void device_level_histo(affine_point* pt_arr, uint256_g* power_arr, ec_point* out_histo, size_t arr_len, uint BLOCKS_PER_BIN)
 {
+   
     uint chunk_num = blockIdx.x / BLOCKS_PER_BIN;
+    // printf("block id: %d, blocks per bin: %d, chunk num: %d\n", blockIdx.x, BLOCKS_PER_BIN, chunk_num);
 
     uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
-    size_t start_pos = blockIdx.x * ELEMS_PER_BLOCK;
+    size_t start_pos = (blockIdx.x % BLOCKS_PER_BIN) * ELEMS_PER_BLOCK;
     size_t end_pos = min(start_pos + ELEMS_PER_BLOCK, arr_len);
     
     size_t output_pos = SMALL_CHUNK_SIZE *  blockIdx.x;
@@ -589,9 +591,10 @@ __global__ void shrink_histo(const ec_point* local_histo_arr, ec_point* shrinked
 #define NUM_BANKS 16
 #define LOG_NUM_BANKS 4
 #ifdef ZERO_BANK_CONFLICTS
-#define CONFLICT_FREE_OFFSET(n) ( ((n) >> NUM_BANKS) + ( (n) >> (2 * LOG_NUM_BANKS)) )
+//#define CONFLICT_FREE_OFFSET(n) ( ((n) >> NUM_BANKS) + ( (n) >> (2 * LOG_NUM_BANKS)) )
+#define CONFLICT_FREE_OFFSET(n) (0)
 #else
-#define CONFLICT_FREE_OFFSET(n) ((n) >> LOG_NUM_BANKS)
+#define CONFLICT_FREE_OFFSET(n)  ((n) >> LOG_NUM_BANKS) 
 #endif
 
 
@@ -604,6 +607,9 @@ __global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
 {
     // allocated on invocation
     __shared__ ec_point temp[PIPPENGER_BLOCK_SIZE * 2];
+
+    if (blockIdx.x != 1)
+        return;
 
     //scanning
 
@@ -666,12 +672,13 @@ __global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
     for (int d = SMALL_CHUNK_SIZE >> 1; d > 0; d >>= 1)
     {
         if (tid < d)
-            temp[tid] = temp[tid + d];
+            temp[tid] = ECC_ADD(temp[tid], temp[tid + d]);
         __syncthreads();
     }
 
     if (tid == 0)
-        out[blockIdx.x * SMALL_CHUNK_SIZE] = temp[0];
+        out[blockIdx.x] = temp[0];
+        //out[blockIdx.x * SMALL_CHUNK_SIZE] = temp[0];
 }
 
 

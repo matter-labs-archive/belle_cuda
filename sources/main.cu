@@ -104,7 +104,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         goto Error;
     }
 
-    cudaStatus = cudaMalloc(&C_dev_arr, bench_len * sizeof(Ctype));
+    cudaStatus = cudaMalloc(&C_dev_arr, 1000 * sizeof(Ctype));
     if (cudaStatus != cudaSuccess)
     {
         fprintf(stderr, "cudaMalloc (C_dev_arr) failed!\n");
@@ -177,7 +177,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
     if (scalar_return)
          C_host_arr = (Ctype*)malloc(sizeof(Ctype));
     else
-        C_host_arr = (Ctype*)malloc(bench_len * sizeof(Ctype));
+        C_host_arr = (Ctype*)malloc(1000 * sizeof(Ctype));
 
     cudaStatus = cudaMemcpy(A_host_arr, A_dev_arr, bench_len * sizeof(Atype), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess)
@@ -259,7 +259,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         }
         else
         {
-            cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, bench_len * sizeof(Ctype), cudaMemcpyDeviceToHost);
+            cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, 1000 * sizeof(Ctype), cudaMemcpyDeviceToHost);
             if (cudaStatus != cudaSuccess)
             {
                 fprintf(stderr, "cudaMemcpy (C_arrs) failed!\n");
@@ -267,7 +267,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
             }
 
             stream << "C array:" << std::endl;
-            for (size_t i = 0; i < bench_len; i++)
+            for (size_t i = 0; i < 512; i++)
             {
                 stream << C_host_arr[i] << std::endl;
             }
@@ -406,8 +406,8 @@ void Pippenger_driver(affine_point*, uint256_g*, ec_point*, size_t);
 ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
     //{"naive warp level approach with atomics", naive_multiexp_kernel_warp_level_atomics_driver},
     //{"naive block level approach with atomics", naive_multiexp_kernel_block_level_atomics_driver},
-    {"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
-    //{"Pippenger", Pippenger_driver}
+    //{"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
+    {"Pippenger", Pippenger_driver}
 };
 
 //-------------------------------------------------------------------------------------------------------------------------------------------------
@@ -415,8 +415,8 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t bench_len = 1000;
-//size_t bench_len = 10;
+//size_t bench_len = 256;
+size_t bench_len = 10;
 
 const char* OUTPUT_FILE = "benches.txt";
 
@@ -467,7 +467,7 @@ int main(int argc, char* argv[])
     // gpu_benchmark(affine_exp_curve_point_bench, bench_len, OUTPUT_FILE);
 
     std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE);
+    gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE, false);
 
     return 0;
 }
