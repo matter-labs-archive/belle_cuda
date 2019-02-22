@@ -12,6 +12,7 @@
 #include <time.h>
 
 #include <iostream>
+#include <fstream> 
 #include <iomanip>
 
 std::ostream& operator<<(std::ostream& os, const uint256_g num)
@@ -57,7 +58,8 @@ template<typename Atype, typename Btype, typename Ctype>
 using kernel_func_vec_t = std::vector<std::pair<const char*, kernel_func_ptr<Atype, Btype, Ctype>>>;
 
 template<typename Atype, typename Btype, typename Ctype>
-void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench_len, bool scalar_return = false)
+void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench_len, const char* output_file = nullptr, 
+    bool scalar_return = false)
 {
     Atype* A_host_arr = nullptr;
     Btype* B_host_arr = nullptr;
@@ -68,6 +70,11 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
     Ctype* C_dev_arr = nullptr;
 
     curandState *devStates = nullptr;
+
+    std::ofstream fstream;
+    if (output_file)
+        fstream.open(output_file);
+    std::ostream& stream = (output_file ? fstream : std::cout);
 
     int blockSize;
   	int minGridSize;
@@ -184,19 +191,19 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         goto Error;
     }
 
-    std::cout << "A array:" << std::endl;
+    stream << "A array:" << std::endl;
     for (size_t i = 0; i < bench_len; i++)
     {
-        std::cout << A_host_arr[i] << std::endl;
+        stream << A_host_arr[i] << std::endl;
     }
-    std::cout << std::endl;
+    stream << std::endl;
 
-    std::cout << "B array:" << std::endl;
+    stream << "B array:" << std::endl;
     for (size_t i = 0; i < bench_len; i++)
     {
-        std::cout << B_host_arr[i] << std::endl;
+        stream << B_host_arr[i] << std::endl;
     }
-    std::cout << std::endl;
+    stream << std::endl;
 
 #endif
 
@@ -244,9 +251,9 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
                 goto Error;
             }
 
-            std::cout << "C elem:" << std::endl;
-            std::cout << C_host_arr[0] << std::endl;
-            std::cout << std::endl;
+            stream << "C elem:" << std::endl;
+            stream << C_host_arr[0] << std::endl;
+            stream << std::endl;
         }
         else
         {
@@ -257,16 +264,14 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
                 goto Error;
             }
 
-            std::cout << "C array:" << std::endl;
+            stream << "C array:" << std::endl;
             for (size_t i = 0; i < bench_len; i++)
             {
-                std::cout << C_host_arr[i] << std::endl;
+                stream << C_host_arr[i] << std::endl;
             }
-            std::cout << std::endl;
+            stream << std::endl;
         }
         
-       
-
 #endif
     }
 
@@ -408,8 +413,10 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t bench_len = 10000000;
-//size_t bench_len = 3;
+//size_t bench_len = 10000000;
+size_t bench_len = 10;
+
+const char* OUTPUT_FILE = "benches.txt";
 
 int main(int argc, char* argv[])
 {
@@ -452,11 +459,11 @@ int main(int argc, char* argv[])
     // std::cout << "ECC exponentiation benchmark: " << std::endl << std::endl;
     // gpu_benchmark(exp_curve_point_bench, bench_len);
 
-    // std::cout << "ECC affine exponentiation benchmark: " << std::endl << std::endl;
-    // gpu_benchmark(affine_exp_curve_point_bench, bench_len);
+    std::cout << "ECC affine exponentiation benchmark: " << std::endl << std::endl;
+    gpu_benchmark(affine_exp_curve_point_bench, bench_len, OUTPUT_FILE);
 
-    std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    gpu_benchmark(multiexp_curve_point_bench, bench_len);
+    // std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
+    // gpu_benchmark(multiexp_curve_point_bench, bench_len);
 
     return 0;
 }
