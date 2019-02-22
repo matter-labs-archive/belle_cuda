@@ -168,6 +168,8 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
 
 #ifdef PRINT_BENCHES
 
+    stream << "Bench len = " << bench_len << std::endl;
+
     //copy generated arrays from device to host and print them!
 
     A_host_arr = (Atype*)malloc(bench_len * sizeof(Atype));
@@ -404,8 +406,8 @@ void Pippenger_driver(affine_point*, uint256_g*, ec_point*, size_t);
 ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
     //{"naive warp level approach with atomics", naive_multiexp_kernel_warp_level_atomics_driver},
     //{"naive block level approach with atomics", naive_multiexp_kernel_block_level_atomics_driver},
-    //{"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
-    {"Pippenger", Pippenger_driver}
+    {"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
+    //{"Pippenger", Pippenger_driver}
 };
 
 //-------------------------------------------------------------------------------------------------------------------------------------------------
@@ -413,8 +415,8 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-//size_t bench_len = 10000000;
-size_t bench_len = 10;
+size_t bench_len = 1000;
+//size_t bench_len = 10;
 
 const char* OUTPUT_FILE = "benches.txt";
 
@@ -433,6 +435,8 @@ int main(int argc, char* argv[])
 	}
 
     std::cout << "Benchmark length: " << bench_len << std::endl << std::endl;
+    std::cout << "www: " << sizeof(ec_point) / 4 << std::endl << std::endl;
+
 
 	
 	// std::cout << "addition benchmark: " << std::endl << std::endl;
@@ -459,11 +463,11 @@ int main(int argc, char* argv[])
     // std::cout << "ECC exponentiation benchmark: " << std::endl << std::endl;
     // gpu_benchmark(exp_curve_point_bench, bench_len);
 
-    std::cout << "ECC affine exponentiation benchmark: " << std::endl << std::endl;
-    gpu_benchmark(affine_exp_curve_point_bench, bench_len, OUTPUT_FILE);
+    // std::cout << "ECC affine exponentiation benchmark: " << std::endl << std::endl;
+    // gpu_benchmark(affine_exp_curve_point_bench, bench_len, OUTPUT_FILE);
 
-    // std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    // gpu_benchmark(multiexp_curve_point_bench, bench_len);
+    std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
+    gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE);
 
     return 0;
 }

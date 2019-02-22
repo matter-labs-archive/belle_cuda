@@ -35,10 +35,10 @@ DEVICE_FUNC inline void __shfl_down(const ec_point& in_var, ec_point& out_var, u
 
     for (unsigned i = 0; i < 6; i++)
     {
-        b[i].x = __shfl_down_sync(a[i].x, offset, width);
-        b[i].y = __shfl_down_sync(a[i].y, offset, width);
-        b[i].z = __shfl_down_sync(a[i].z, offset, width);
-        b[i].w = __shfl_down_sync(a[i].w, offset, width);
+        b[i].x = __shfl_down_sync(0xFFFFFFFF, a[i].x, offset, width);
+        b[i].y = __shfl_down_sync(0xFFFFFFFF, a[i].y, offset, width);
+        b[i].z = __shfl_down_sync(0xFFFFFFFF, a[i].z, offset, width);
+        b[i].w = __shfl_down_sync(0xFFFFFFFF, a[i].w, offset, width);
     }
 }
 
@@ -283,20 +283,27 @@ void naive_multiexp_kernel_block_level_recursion_driver(affine_point* point_arr,
 	std::cout << "Real grid size: " << realGridSize << ",  blockSize: " << ExpBlockSize << std::endl;
 	naive_multiexp_kernel_block_level_recursion<<<realGridSize, ExpBlockSize>>>(point_arr, power_arr, out_arr, arr_len);
 
-    //NB: we also use input array as a source for temporary output, so that it's content will be destroyed
+    //NB: we also need to use temporary array (we need to store all temporary values somewhere!)
+
+    ec_point* d_temp_storage = nullptr;
+
+    if (realGridSize > 1)
+    {
+        cudaMalloc((void **)&d_temp_storage, realGridSize * sizeof(ec_point));
+    }
 
     arr_len = realGridSize;
     ec_point* temp_input_arr = out_arr;
-    ec_point* temp_output_arr = reinterpret_cast<ec_point*>(point_arr);
+    ec_point* temp_output_arr = d_temp_storage;
     unsigned iter_count = 0;
-
+ 
     while (arr_len > 1)
     {
         cudaDeviceSynchronize();
-        std::cout << "iter " << ++iter_count << ", real grid size: " << realGridSize << ",  blockSize: " << ReductionBlockSize << std::endl;
         realGridSize = (arr_len + ReductionBlockSize - 1) / ReductionBlockSize;
         realGridSize = min(realGridSize, maxReductionGridSize);
 
+        std::cout << "iter " << ++iter_count << ", real grid size: " << realGridSize << ",  blockSize: " << ReductionBlockSize << std::endl;
         naive_kernel_block_level_reduction<<<realGridSize, ReductionBlockSize>>>(temp_input_arr, temp_output_arr, arr_len);
         arr_len = realGridSize;
 
@@ -304,11 +311,12 @@ void naive_multiexp_kernel_block_level_recursion_driver(affine_point* point_arr,
         ec_point* swapper = temp_input_arr;
         temp_input_arr = temp_output_arr;
         temp_output_arr = swapper;
-
     }
 
     //copy output to the correct array! (but we are just moving pointers :)
-    out_arr = temp_output_arr;
+    if (out_arr != temp_input_arr)
+        cudaMemcpy(out_arr, temp_input_arr, sizeof(ec_point), cudaMemcpyDeviceToDevice);
+    cudaFree(d_temp_storage);
 }
 
 //Pippenger
