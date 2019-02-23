@@ -394,14 +394,14 @@ DEVICE_FUNC __inline__ uint reduce_peers(uint peers, ec_point& pt)
     // ignore peers with lower (or same) lane index
     peers &= (0xfffffffe << lane);
 
-    while(__any_sync(peers, peers))
+    while(__any_sync(0xffffffff, peers))
     {
         // find next-highest remaining peer
         int next = __ffs(peers);
 
         // __shfl() only works if both threads participate, so we always do.
         ec_point temp;
-        __shfl(pt, temp, peers, next - 1);
+        __shfl(pt, temp, 0xffffffff, next - 1);
 
         // only add if there was anything to add
         if (next)
@@ -413,7 +413,7 @@ DEVICE_FUNC __inline__ uint reduce_peers(uint peers, ec_point& pt)
         uint32_t done = rel_pos & 1;
 
         // remove all peers that are already done
-        peers &= ~ __ballot_sync(peers, done);
+        peers &= ~ __ballot_sync(0xffffffff, done);
 
         // abuse relative position as iteration counter
         rel_pos >>= 1;
@@ -591,8 +591,8 @@ __global__ void shrink_histo(const ec_point* local_histo_arr, ec_point* shrinked
 #define NUM_BANKS 16
 #define LOG_NUM_BANKS 4
 #ifdef ZERO_BANK_CONFLICTS
-//#define CONFLICT_FREE_OFFSET(n) ( ((n) >> NUM_BANKS) + ( (n) >> (2 * LOG_NUM_BANKS)) )
-#define CONFLICT_FREE_OFFSET(n) (0)
+#define CONFLICT_FREE_OFFSET(n) ( ((n) >> NUM_BANKS) + ( (n) >> (2 * LOG_NUM_BANKS)) )
+//#define CONFLICT_FREE_OFFSET(n) (0)
 #else
 #define CONFLICT_FREE_OFFSET(n)  ((n) >> LOG_NUM_BANKS) 
 #endif
@@ -607,9 +607,6 @@ __global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
 {
     // allocated on invocation
     __shared__ ec_point temp[PIPPENGER_BLOCK_SIZE * 2];
-
-    if (blockIdx.x != 1)
-        return;
 
     //scanning
 
@@ -677,8 +674,36 @@ __global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
     }
 
     if (tid == 0)
-        out[blockIdx.x] = temp[0];
-        //out[blockIdx.x * SMALL_CHUNK_SIZE] = temp[0];
+        out[blockIdx.x * SMALL_CHUNK_SIZE] = temp[0];
+}
+
+//the last kernel is not important, however it is very useful for debugging purposes
+
+__global__ void final_reduce(ec_point* arr)
+{
+    constexpr uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / SMALL_C;
+    
+    __shared__ ec_point temp[SMALL_CHUNK_SIZE];
+    
+    uint tid = threadIdx.x;
+    ec_point val = (tid < NUM_OF_CHUNKS ? arr[tid * SMALL_CHUNK_SIZE] : point_at_infty());
+
+    for (int j = 0; j < tid * SMALL_C; j++)
+        val = ECC_DOUBLE(val);
+
+    temp[tid] = val;
+
+    __syncthreads();
+
+    for (int d = SMALL_CHUNK_SIZE >> 1; d > 0; d >>= 1)
+    {
+        if (tid < d)
+            temp[tid] = ECC_ADD(temp[tid], temp[tid + d]);
+        __syncthreads();
+    }
+    
+    if (tid == 0)
+        arr[0] = temp[0];
 }
 
 
@@ -713,9 +738,14 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
 
     //-----------------------------------------------------------------------------------------------------------------
     //calculate kernel run parameteres
+
+    gridSize = 64;
  
     uint BLOCKS_PER_BIN = gridSize / NUM_OF_CHUNKS;
-    //uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
+    uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
+
+    std::cout << "Num of chunks : " << NUM_OF_CHUNKS << ", blocks per bin : " << BLOCKS_PER_BIN << 
+        ",elems per block : " << ELEMS_PER_BLOCK << std::endl;
 
     //allocate memory for temporary array of needed
 
@@ -737,6 +767,10 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
     cudaDeviceSynchronize();
 
     scan_and_reduce<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE>>>(out_arr, out_arr);
+
+    //for debugging and tests only!
+    cudaDeviceSynchronize();
+    final_reduce<<<1, PIPPENGER_BLOCK_SIZE>>>(out_arr);
 
     cudaFree(histo_arr);
 }

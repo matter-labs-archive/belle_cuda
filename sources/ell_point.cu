@@ -8,7 +8,7 @@
 
 DEVICE_FUNC ec_point ECC_DOUBLE_PROJ(const ec_point& pt)
 {
-	if (is_zero(pt.y))
+	if (is_zero(pt.y) || is_infinity(pt))
 		return point_at_infty();
 	else
 	{
@@ -209,7 +209,7 @@ DEVICE_FUNC ec_point ECC_ADD_MIXED_PROJ(const ec_point& left, const affine_point
 
 DEVICE_FUNC ec_point ECC_DOUBLE_JAC(const ec_point& pt)
 {
-	if (is_zero(pt.y))
+	if (is_zero(pt.y) || is_infinity(pt))
 		return point_at_infty();
 	else
 	{
