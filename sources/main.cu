@@ -404,7 +404,7 @@ void naive_multiexp_kernel_block_level_recursion_driver(affine_point*, uint256_g
 void Pippenger_driver(affine_point*, uint256_g*, ec_point*, size_t);
 
 ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
-    //{"naive warp level approach with atomics", naive_multiexp_kernel_warp_level_atomics_driver},
+    {"naive warp level approach with atomics", naive_multiexp_kernel_warp_level_atomics_driver},
     //{"naive block level approach with atomics", naive_multiexp_kernel_block_level_atomics_driver},
     //{"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
     {"Pippenger", Pippenger_driver}
@@ -415,7 +415,7 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t bench_len = 1000;
+size_t bench_len = 1000000;
 //size_t bench_len = 10;
 
 const char* OUTPUT_FILE = "benches.txt";
@@ -467,7 +467,7 @@ int main(int argc, char* argv[])
     // gpu_benchmark(affine_exp_curve_point_bench, bench_len, OUTPUT_FILE);
 
     std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE, false);
+    gpu_benchmark(multiexp_curve_point_bench, bench_len, nullptr, false);
 
     return 0;
 }

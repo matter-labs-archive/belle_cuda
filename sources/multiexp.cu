@@ -181,7 +181,7 @@ void naive_multiexp_kernel_block_level_atomics_driver(affine_point* point_arr, u
     cudaMalloc((void**)&mutex, sizeof(int));
     cudaMemset(mutex, 0, sizeof(int));
 
-  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_atomics, 0, 4 * N * 3 * WARP_SIZE);
+  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_atomics, 4 * N * 3 * WARP_SIZE, 0);
   	realGridSize = (arr_len + blockSize - 1) / blockSize;
 
     int maxActiveBlocks;
@@ -706,9 +706,7 @@ __global__ void final_reduce(ec_point* arr)
         arr[0] = temp[0];
 }
 
-
 //Pippenger: basic version - simple, yet powerful. The same version of Pippenger algorithm is implemented in libff and Bellman
-
 
 void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
 {
@@ -739,7 +737,7 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
     //-----------------------------------------------------------------------------------------------------------------
     //calculate kernel run parameteres
 
-    gridSize = 64;
+    //gridSize = 64;
  
     uint BLOCKS_PER_BIN = gridSize / NUM_OF_CHUNKS;
     uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
@@ -776,7 +774,294 @@ void Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* o
 }
 
 
+//versoin of Pippenger algorithm with large bins
+//----------------------------------------------------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------------------------------
+
+#define LARGE_C 16
+#define LARGE_CHUNK_SIZE 65536
+
+DEVICE_FUNC __inline__ void large_histo_impl(affine_point* pt_arr, uint256_g* power_arr, 
+    size_t arr_start_pos, size_t arr_end_pos, uint chunk_num, Bin* bins)
+{
+    idx = arr_start_pos + threadIdx.x;
+    while (idx < arr_end_pos)
+    {
+        affine_point& pt = pt_arr[idx];
+        uint key = get_key(power_arr[idx], chunk_num);
+
+        uint real_key = REVERSE_INDEX(key, SMALL_CHUNK_SIZE);
+
+        bool leaveLoop = false;
+        while (!leaveLoop)
+        {
+            if ( bins[real_key].lock.try_lock())
+            {
+                //critical section
+                bins[real_key].pt = ECC_MIXED_ADD(pt, bins[real_key].pt);
+                leaveLoop = true;
+                bins[real_key].lock.unlock();
+                
+            }
+            __threadfence();
+        }
+
+        idx += blockDim.x;
+    }
+}
+
+__global__ void init_large_histo(Bin* bins)
+{
+    uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / LARGE_C;
+
+    size_t idx = threadIdx.x;
+    while (idx < LARGE_CHUNK_SIZE * NUM_OD_CHUNKS);
+    {
+        bins[idx].lock.init();
+        bins[idx].pt = point_at_infty();
+        idx += blockDim.x;
+    }
+}
+
+__global__ void large_histo(affine_point* pt_arr, uint256_g* power_arr, Bin* bins, size_t arr_len, uint BLOCKS_PER_BIN)
+{   
+    uint chunk_num = blockIdx.x / BLOCKS_PER_BIN;
+    uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
+    size_t start_pos = (blockIdx.x % BLOCKS_PER_BIN) * ELEMS_PER_BLOCK;
+    size_t end_pos = min(start_pos + ELEMS_PER_BLOCK, arr_len);
+    size_t output_pos = LARGE_CHUNK_SIZE * chunk_num;
+    
+    large_histo_impl(pt_arr, power_arr, start_pos, end_pos, chunk_num, out_histo + output_pos);
+}
+
+//NB: temp array size is twice as large as blocksize;
+
+DEVICE_FUNC void block_level_prescan(const ec_point* in_arr, ec_point* out_arr, ec_point* block_sums)
+{
+    __shared__ ec_point temp[SMALL_CHUNK_SIZE * 2];
+    
+    uint tid = threadIdx.x;
+    uint offset = 1;
+   
+    uint ai = tid;
+    uint bi = tid + (SMALL_CHUNK_SIZE / 2);
+
+    uint bankOffsetA = CONFLICT_FREE_OFFSET(ai);
+    uint bankOffsetB = CONFLICT_FREE_OFFSET(ai);
+    temp[ai + bankOffsetA] = in_arr[ai];
+    temp[bi + bankOffsetB] = in_arr[bi]; 
+
+    // build sum in place up the tree
+    for (int d = SMALL_CHUNK_SIZE >> 1; d > 0; d >>= 1) 
+    {
+        __syncthreads();
+        if (tid < d)
+        {
+            uint ai = offset * (2 * tid + 1) - 1;
+            uint bi = offset*(2 * tid + 2) - 1;
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi); 
+
+            temp[bi] = ECC_ADD(temp[ai], temp[bi]);
+        }
+        offset *= 2;
+    }
+  
+    if (tid == 0)
+    {
+        temp[SMALL_CHUNK_SIZE - 1 + CONFLICT_FREE_OFFSET(SMALL_CHUNK_SIZE - 1)] = point_at_infty();
+    }
+
+    // traverse down tree & build scan
+    for (uint d = 1; d < SMALL_CHUNK_SIZE; d *= 2) 
+    {
+        offset >>= 1;
+        __syncthreads();
+        if (tid < d)
+        {
+            uint ai = offset * (2 * tid + 1) - 1;
+            int bi = offset * (2 * tid + 2) - 1;
+            
+            ai += CONFLICT_FREE_OFFSET(ai);
+            bi += CONFLICT_FREE_OFFSET(bi); 
+            
+            ec_point t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] = ECC_ADD(t, temp[bi]);
+        }
+    }
+    
+    __syncthreads();
+   
+    //print result back to global memory
+
+    ai = tid;
+    bi = tid + (SMALL_CHUNK_SIZE / 2);
+    bankOffsetA = CONFLICT_FREE_OFFSET(ai);
+    bankOffsetB = CONFLICT_FREE_OFFSET(ai);
+
+    out_arr[ai] = temp[ai + bankOffsetA];
+    out_arr[bi] = temp[bi + bankOffsetB];
+   
+    if (tid == 0)
+        out[blockIdx.x] = temp[0];
+}
+
+__global__ void scan(const ec_point* in_arr, ec_point* out_arr, ec_point* block_sums)
+{
+    const ec_point* in_arr = global_in_arr + blockIdx.x * SMALL_CHUNK_SIZE;
+
+     uint chunk_num = blockIdx.x / BLOCKS_PER_BIN;
+    uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
+    size_t start_pos = (blockIdx.x % BLOCKS_PER_BIN) * ELEMS_PER_BLOCK;
+    size_t end_pos = min(start_pos + ELEMS_PER_BLOCK, arr_len);
+    size_t output_pos = LARGE_CHUNK_SIZE * chunk_num;
+
+    block_level_prescan(const ec_point* in_arr, ec_point* out_arr, ec_point* block_sums);
+}
+
+__global__ void AdjustIncr (float * arr, float * incr, int n)
+{
+	if(blockIdx.x * BLOCK_SIZE * 2 + threadIdx.x * 2 + 1 < n)
+	{
+		arr[blockIdx.x * BLOCK_SIZE * 2 + threadIdx.x * 2 + 1] += incr[blockIdx.x];
+		arr[blockIdx.x * BLOCK_SIZE * 2 + threadIdx.x * 2] += incr[blockIdx.x];
+	}
+	else if (blockIdx.x * BLOCK_SIZE * 2 + threadIdx.x * 2 < n)
+	{
+		arr[blockIdx.x * BLOCK_SIZE * 2 + threadIdx.x * 2] += incr[blockIdx.x];
+	}
+}
+
+void prescanArrayHelper(float *outArray, float *inArray, int numElements, int index)
+{
+//	printf("starting helper index %d\n", index);
+	dim3 dim_block, dim_grid;
+	dim_block.x = BLOCK_SIZE;
+	dim_block.y = dim_block.z = 1;
+
+	dim_grid.x = ceil((float)(numElements / (float)(dim_block.x * 2)));
+	dim_grid.y = dim_grid.z = 1;
+
+
+
+	prescanArrayKernel<<<dim_grid,dim_block>>>(outArray, inArray, numElements, BlockSums[index]);
+
+	if (dim_grid.x > 1)
+	{
+		prescanArrayHelper(BlockSumsSummed[index], BlockSums[index], dim_grid.x, index+1);
+		AdjustIncr<<<dim_grid, dim_block>>>(outArray, BlockSumsSummed[index], numElements);
+
+	}
+}
+
+void prescanArray(float *outArray, float *inArray, int numElements)
+{
+	prescanArrayHelper(outArray,inArray, numElements, 0);
+
+
+}
+ 
+
+
+
+struct kernel_geometry
+{
+    uint gridSize;
+    uint blockSize;
+};
+
+template<typename T>
+kernel_geometry find_optimal_geometry(T func, uint shared_memory_used, uint32_t smCount)
+{
+    int gridSize;
+    int blockSize;
+    int maxActiveBlocks;
+
+    cudaOccupancyMaxPotentialBlockSize(&GridSize, &blockSize, func, shared_memory_used, 0);
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, func, blockSize, shared_memory_used);
+    gridSize = min(maxActiveBlocks * smCount, gridSize);
+
+    return kernel_geometry{gridSize, blockSize};
+}
+
+void large_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+{
+    uint gridSize;
+    int maxActiveBlocks;
+
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+	uint32_t smCount = prop.multiProcessorCount;
+
+    kernel_geometry init_geometry = find_optimal_geometry(init_large_histo, 0, smCount);
+    kernel geometry histo_geometry = find_optimal_geometry(large_histo, 0, smCount);
+
+
+
+    //we start by finding the optimal geometry and grid size
+
+    constexpr uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / SMALL_C;
+    uint SHARED_MEMORY_USED = 4 * 8 * 3 * SMALL_CHUNK_SIZE;
+
+    gridSize = (arr_len + PIPPENGER_BLOCK_SIZE - 1) / PIPPENGER_BLOCK_SIZE;
+
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, device_level_histo, PIPPENGER_BLOCK_SIZE, SHARED_MEMORY_USED);
+    gridSize = min(maxActiveBlocks * smCount, gridSize);
+    gridSize = max(gridSize, NUM_OF_CHUNKS);
+
+    //find the closest power of 2
+
+    uint num = BITS_PER_LIMB - __builtin_clz(gridSize) - 1;
+    gridSize = (1 << num);
+
+    //-----------------------------------------------------------------------------------------------------------------
+    //calculate kernel run parameteres
+
+    //gridSize = 64;
+ 
+    uint BLOCKS_PER_BIN = gridSize / NUM_OF_CHUNKS;
+    uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
+
+    std::cout << "Num of chunks : " << NUM_OF_CHUNKS << ", blocks per bin : " << BLOCKS_PER_BIN << 
+        ",elems per block : " << ELEMS_PER_BLOCK << std::endl;
+
+    //allocate memory for temporary array of needed
+
+    ec_point* histo_arr = nullptr;
+    size_t HISTO_ELEMS_COUNT = SMALL_CHUNK_SIZE * gridSize;
+    cudaMalloc((void **)&histo_arr, HISTO_ELEMS_COUNT * sizeof(ec_point));
+    
+    //run kernels - one after after another:
+    //1) collect local block-level histograms
+    //2) shrink all local histograms to a larger one
+    //3) perform block level scan and reduce on shrinked histogram
+
+    gridSize = NUM_OF_CHUNKS;
+    device_level_histo<<<gridSize, PIPPENGER_BLOCK_SIZE>>>(point_arr, power_arr, histo_arr, arr_len, BLOCKS_PER_BIN);
+   
+    cudaDeviceSynchronize();
+
+    shrink_histo<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE>>>(histo_arr, out_arr, BLOCKS_PER_BIN);
+    cudaDeviceSynchronize();
+
+    scan_and_reduce<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE>>>(out_arr, out_arr);
+
+    //for debugging and tests only!
+    cudaDeviceSynchronize();
+    final_reduce<<<1, PIPPENGER_BLOCK_SIZE>>>(out_arr);
+
+    cudaFree(histo_arr);
+}
+
+
+    
+   
+
 //Some experiements with CUB library
+//----------------------------------------------------------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------------------------------------------------
 //----------------------------------------------------------------------------------------------------------------------------------------------
 
 //Do not compile: may be I should ask on stackoverflow?
