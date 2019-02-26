@@ -104,7 +104,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         goto Error;
     }
 
-    cudaStatus = cudaMalloc(&C_dev_arr, 1000 * sizeof(Ctype));
+    cudaStatus = cudaMalloc(&C_dev_arr, bench_len * sizeof(Ctype));
     if (cudaStatus != cudaSuccess)
     {
         fprintf(stderr, "cudaMalloc (C_dev_arr) failed!\n");
@@ -259,7 +259,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
         }
         else
         {
-            cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, 1000 * sizeof(Ctype), cudaMemcpyDeviceToHost);
+            cudaStatus = cudaMemcpy(C_host_arr, C_dev_arr, bench_len * sizeof(Ctype), cudaMemcpyDeviceToHost);
             if (cudaStatus != cudaSuccess)
             {
                 fprintf(stderr, "cudaMemcpy (C_arrs) failed!\n");
@@ -267,7 +267,7 @@ void gpu_benchmark(kernel_func_vec_t<Atype, Btype, Ctype> func_vec, size_t bench
             }
 
             stream << "C array:" << std::endl;
-            for (size_t i = 0; i < 512; i++)
+            for (size_t i = 0; i < bench_len; i++)
             {
                 stream << C_host_arr[i] << std::endl;
             }
@@ -426,8 +426,8 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t bench_len = 1000000;
-//size_t bench_len = 10;
+//size_t bench_len = 1000000;
+size_t bench_len = 3;
 
 const char* OUTPUT_FILE = "benches.txt";
 
@@ -459,8 +459,8 @@ int main(int argc, char* argv[])
 	// std::cout << "square benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(square_bench, bench_len);
 
-    // std::cout << "field inversion benchmark: " << std::endl << std::endl;
-	// gpu_benchmark(mul_inv_bench, bench_len);
+    std::cout << "field inversion benchmark: " << std::endl << std::endl;
+	gpu_benchmark(mul_inv_bench, bench_len);
 
 	// std::cout << "montgomery multiplication benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(mont_mul_bench, bench_len);
@@ -477,8 +477,8 @@ int main(int argc, char* argv[])
     // std::cout << "ECC affine exponentiation benchmark: " << std::endl << std::endl;
     // gpu_benchmark(affine_exp_curve_point_bench, bench_len, OUTPUT_FILE);
 
-    std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    gpu_benchmark(multiexp_curve_point_bench, bench_len, nullptr, false);
+    // std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
+    // gpu_benchmark(multiexp_curve_point_bench, bench_len, nullptr, false);
 
     return 0;
 }

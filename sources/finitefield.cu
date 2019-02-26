@@ -42,12 +42,19 @@ struct stage_one_data
 	uint32_t k;
 };
 
+#include <stdio.h>
+
+__device__ void print2_uint256(const uint256_g& val)
+{
+    printf("%x %x %x %x %x %x %x %x\n", val.n[7], val.n[6], val.n[5], val.n[4], val.n[3], val.n[2], val.n[1], val.n[0]);
+}
+
 static DEVICE_FUNC inline stage_one_data stage_one_mul_inv(const uint256_g& elem)
 {
 	uint256_g U = BASE_FIELD_P;
 	uint256_g V = elem;
-	uint256_g R = uint256_g{0};
-	uint256_g S = uint256_g{1};
+	uint256_g R = uint256_g{0, 0, 0, 0, 0, 0, 0, 0};
+	uint256_g S = uint256_g{1, 0, 0, 0, 0, 0, 0, 0};
 
 	uint32_t k = 0;
 
@@ -65,14 +72,14 @@ static DEVICE_FUNC inline stage_one_data stage_one_mul_inv(const uint256_g& elem
 		}
 		else if (CMP(U, V) > 0)
 		{
-			U = SHIFT_RIGHT(FIELD_SUB(U, V), 1);
-			R = FIELD_ADD(R, S);
+			U = SHIFT_RIGHT(SUB(U, V), 1);
+			R = ADD(R, S);
 			S = SHIFT_LEFT(S, 1);
 		}
 		else
 		{
-			V = SHIFT_RIGHT(FIELD_SUB(V, U), 1);
-			S = FIELD_ADD(R, S);
+			V = SHIFT_RIGHT(SUB(V, U), 1);
+			S = ADD(R, S);
 			R = SHIFT_LEFT(R, 1);
 		}
 
@@ -85,16 +92,22 @@ static DEVICE_FUNC inline stage_one_data stage_one_mul_inv(const uint256_g& elem
 	return stage_one_data{R, k};
 }
 
+
+
 DEVICE_FUNC uint256_g FIELD_MUL_INV(const uint256_g& elem)
 {
 	auto data = stage_one_mul_inv(elem);
+	print2_uint256(data.almost_mont_inverse);
 	if (data.k == R_LOG)
 	{
 		return MONT_MUL(data.almost_mont_inverse, BASE_FIELD_R2);
 	}
 	else
 	{
-		auto res = uint256_g{0};
+		//TODO: handle the case if k < R (in bit length)
+		
+		auto res = uint256_g{0, 0, 0, 0, 0, 0, 0, 0};
+		printf("k: %d\n", data.k);
 		set_bit(res, 2 * R_LOG - data.k);
 		res = MONT_MUL(res, data.almost_mont_inverse);
 		return MONT_MUL(res, BASE_FIELD_R2);
