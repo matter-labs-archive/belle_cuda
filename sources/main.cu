@@ -348,12 +348,11 @@ general_func_vec_t mont_mul_bench = {
 
 using mul_inv_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint256_g>;
 
-void FIELD_MUL_INV_driver(uint256_g*, uint256_g*, size_t);
+void FIELD_MUL_INV_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 
 mul_inv_func_vec_t mul_inv_bench = {
     {"mul inversion", FIELD_MUL_INV_driver}
 };
-
 
 using ecc_general_func_vec_t = kernel_func_vec_t<ec_point, ec_point, ec_point>;
 using ecc_point_exp_func_vec_t = kernel_func_vec_t<ec_point, uint256_g, ec_point>;
@@ -460,8 +459,8 @@ int main(int argc, char* argv[])
 	// std::cout << "square benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(square_bench, bench_len);
 
-    std::cout << "field inversion benchmark: " << std::endl << std::endl;
-	gpu_benchmark(mul_inv_bench, bench_len);
+    // std::cout << "field inversion benchmark: " << std::endl << std::endl;
+	// gpu_benchmark(mul_inv_bench, bench_len);
 
 	// std::cout << "montgomery multiplication benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(mont_mul_bench, bench_len);
