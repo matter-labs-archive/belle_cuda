@@ -345,6 +345,16 @@ general_func_vec_t mont_mul_bench = {
 	{"asm CIOS", mont_mul_256_asm_CIOS_driver}
 };
 
+
+using mul_inv_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint256_g>;
+
+void FIELD_MUL_INV_driver(uint256_g*, uint256_g*, size_t);
+
+mul_inv_func_vec_t mul_inv_bench = {
+    {"mul inversion", FIELD_MUL_INV_driver}
+};
+
+
 using ecc_general_func_vec_t = kernel_func_vec_t<ec_point, ec_point, ec_point>;
 using ecc_point_exp_func_vec_t = kernel_func_vec_t<ec_point, uint256_g, ec_point>;
 
@@ -401,13 +411,15 @@ using ecc_multiexp_func_vec_t = kernel_func_vec_t<affine_point, uint256_g, ec_po
 void naive_multiexp_kernel_warp_level_atomics_driver(affine_point*, uint256_g*, ec_point*, size_t);
 void naive_multiexp_kernel_block_level_atomics_driver(affine_point*, uint256_g*, ec_point*, size_t);
 void naive_multiexp_kernel_block_level_recursion_driver(affine_point*, uint256_g*, ec_point*, size_t);
-void Pippenger_driver(affine_point*, uint256_g*, ec_point*, size_t);
+void small_Pippenger_driver(affine_point*, uint256_g*, ec_point*, size_t);
+void large_Pippenger_driver(affine_point*, uint256_g*, ec_point*, size_t);
 
 ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
     {"naive warp level approach with atomics", naive_multiexp_kernel_warp_level_atomics_driver},
     //{"naive block level approach with atomics", naive_multiexp_kernel_block_level_atomics_driver},
     //{"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
-    {"Pippenger", Pippenger_driver}
+    {"Pippenger: 2**8 elems per bin", small_Pippenger_driver},
+    {"Pippenger: 2**16 elems per bin", large_Pippenger_driver},
 };
 
 //-------------------------------------------------------------------------------------------------------------------------------------------------
@@ -435,9 +447,6 @@ int main(int argc, char* argv[])
 	}
 
     std::cout << "Benchmark length: " << bench_len << std::endl << std::endl;
-    std::cout << "www: " << sizeof(ec_point) / 4 << std::endl << std::endl;
-
-
 	
 	// std::cout << "addition benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(addition_bench, bench_len);
@@ -450,6 +459,9 @@ int main(int argc, char* argv[])
 
 	// std::cout << "square benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(square_bench, bench_len);
+
+    std::cout << "field inversion benchmark: " << std::endl << std::endl;
+	gpu_benchmark(mul_inv_bench, bench_len);
 
 	// std::cout << "montgomery multiplication benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(mont_mul_bench, bench_len);
