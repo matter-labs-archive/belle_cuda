@@ -263,14 +263,14 @@ void naive_multiexp_kernel_block_level_recursion_driver(affine_point* point_arr,
 
     //first we find the optimal geometry for both kernels: exponentialtion kernel and reduction
 
-  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_recursion, 0, SHARED_MEMORY_USED);
+  	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_multiexp_kernel_block_level_recursion, SHARED_MEMORY_USED, 0);
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, naive_multiexp_kernel_block_level_recursion, blockSize, SHARED_MEMORY_USED);
     maxExpGridSize = maxActiveBlocks * smCount;
     ExpBlockSize = blockSize;
 
     //the same routine for reduction phase
 
-    cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_kernel_block_level_reduction, 0, SHARED_MEMORY_USED);
+    cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, naive_kernel_block_level_reduction, SHARED_MEMORY_USED, 0);
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, naive_kernel_block_level_reduction, blockSize, SHARED_MEMORY_USED);
     maxReductionGridSize = maxActiveBlocks * smCount;
     ReductionBlockSize = blockSize;
@@ -457,10 +457,9 @@ struct Bin
     ec_point pt;
 };
 
-
-DEVICE_FUNC __inline__ uint get_key(const uint256_g& val, uint chunk_num)
+DEVICE_FUNC __inline__ uint get_key(const uint256_g& val, uint chunk_num, uint bitwidth)
 {
-    uint bit_pos = chunk_num * SMALL_C;
+    uint bit_pos = chunk_num * bitwidth;
     uint limb_idx = bit_pos / BITS_PER_LIMB;
     uint offset = bit_pos % BITS_PER_LIMB;
 
@@ -468,7 +467,7 @@ DEVICE_FUNC __inline__ uint get_key(const uint256_g& val, uint chunk_num)
     uint high_part = (limb_idx < N - 1 ? val.n[limb_idx + 1] : 0);
 
     uint res = __funnelshift_r(low_part, high_part, offset);
-    res &= (1 << SMALL_C) - 1;
+    res &= (1 << bitwidth) - 1;
 
     return res;   
 }
@@ -504,7 +503,7 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
     while (idx < arr_end_pos)
     {
         ec_point pt = from_affine_point(pt_arr[idx]);
-        uint key = get_key(power_arr[idx], chunk_num);
+        uint key = get_key(power_arr[idx], chunk_num, SMALL_C);
 
         uint peers = get_peers(key);
         uint leader = reduce_peers(peers, pt);
@@ -516,7 +515,7 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
             bool leaveLoop = false;
             while (!leaveLoop)
             {
-                if ( bins[real_key].lock.try_lock())
+                if (bins[real_key].lock.try_lock())
                 {
                     //critical section
                     bins[real_key].pt = ECC_ADD(pt, bins[real_key].pt);
@@ -525,7 +524,6 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
                     
                 }
                 __threadfence_block();
-                //printf("here\n");
             }
             
         }
@@ -546,7 +544,6 @@ DEVICE_FUNC __inline__ void block_level_histo(affine_point* pt_arr, uint256_g* p
 __global__ void device_level_histo(affine_point* pt_arr, uint256_g* power_arr, ec_point* out_histo, size_t arr_len, uint BLOCKS_PER_BIN)
 {  
     uint chunk_num = blockIdx.x / BLOCKS_PER_BIN;
-    // printf("block id: %d, blocks per bin: %d, chunk num: %d\n", blockIdx.x, BLOCKS_PER_BIN, chunk_num);
 
     uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
     size_t start_pos = (blockIdx.x % BLOCKS_PER_BIN) * ELEMS_PER_BLOCK;
@@ -597,14 +594,12 @@ __global__ void shrink_histo(const ec_point* local_histo_arr, ec_point* shrinked
 
 
 //NB: arr_len should be a power of two
-//TBD: implement comflict free offsets
-
-#define PIPPENGER_BLOCK_SIZE 256
+//TBD: implement conflict free offsets (correctly!)
 
 __global__ void scan_and_reduce(const ec_point* global_in_arr, ec_point* out)
 {
     // allocated on invocation
-    __shared__ ec_point temp[PIPPENGER_BLOCK_SIZE * 2];
+    __shared__ ec_point temp[SMALL_CHUNK_SIZE * 2];
 
     //scanning
 
@@ -681,7 +676,7 @@ __global__ void final_reduce(ec_point* arr)
 {
     constexpr uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / SMALL_C;
     
-    __shared__ ec_point temp[SMALL_CHUNK_SIZE];
+    __shared__ ec_point temp[NUM_OF_CHUNKS];
     
     uint tid = threadIdx.x;
     ec_point val = (tid < NUM_OF_CHUNKS ? arr[tid * SMALL_CHUNK_SIZE] : point_at_infty());
@@ -693,7 +688,7 @@ __global__ void final_reduce(ec_point* arr)
 
     __syncthreads();
 
-    for (int d = SMALL_CHUNK_SIZE >> 1; d > 0; d >>= 1)
+    for (int d = NUM_OF_CHUNKS >> 1; d > 0; d >>= 1)
     {
         if (tid < d)
             temp[tid] = ECC_ADD(temp[tid], temp[tid + d]);
@@ -721,9 +716,9 @@ void small_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_po
     constexpr uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / SMALL_C;
     uint SHARED_MEMORY_USED = 4 * 8 * 3 * SMALL_CHUNK_SIZE;
 
-    gridSize = (arr_len + PIPPENGER_BLOCK_SIZE - 1) / PIPPENGER_BLOCK_SIZE;
+    gridSize = (arr_len + SMALL_CHUNK_SIZE - 1) / SMALL_CHUNK_SIZE;
 
-    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, device_level_histo, PIPPENGER_BLOCK_SIZE, SHARED_MEMORY_USED);
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, device_level_histo, SMALL_CHUNK_SIZE, SHARED_MEMORY_USED);
     gridSize = min(maxActiveBlocks * smCount, gridSize);
     gridSize = max(gridSize, NUM_OF_CHUNKS);
 
@@ -735,13 +730,13 @@ void small_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_po
     //-----------------------------------------------------------------------------------------------------------------
     //calculate kernel run parameteres
 
-    //gridSize = 64;
+    gridSize = 64 * 2;
  
     uint BLOCKS_PER_BIN = gridSize / NUM_OF_CHUNKS;
     uint ELEMS_PER_BLOCK = (arr_len + BLOCKS_PER_BIN - 1) / BLOCKS_PER_BIN;
 
     std::cout << "Num of chunks : " << NUM_OF_CHUNKS << ", blocks per bin : " << BLOCKS_PER_BIN << 
-        ",elems per block : " << ELEMS_PER_BLOCK << std::endl;
+        ", elems per block : " << ELEMS_PER_BLOCK << std::endl;
 
     //allocate memory for temporary array of needed
 
@@ -754,20 +749,19 @@ void small_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_po
     //2) shrink all local histograms to a larger one
     //3) perform block level scan and reduce on shrinked histogram
 
-    gridSize = NUM_OF_CHUNKS;
-    device_level_histo<<<gridSize, PIPPENGER_BLOCK_SIZE>>>(point_arr, power_arr, histo_arr, arr_len, BLOCKS_PER_BIN);
+    device_level_histo<<<gridSize, SMALL_CHUNK_SIZE>>>(point_arr, power_arr, histo_arr, arr_len, BLOCKS_PER_BIN);
    
     cudaDeviceSynchronize();
 
-    shrink_histo<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE>>>(histo_arr, out_arr, BLOCKS_PER_BIN);
+    shrink_histo<<<NUM_OF_CHUNKS, SMALL_CHUNK_SIZE>>>(histo_arr, out_arr, BLOCKS_PER_BIN);
     cudaDeviceSynchronize();
 
     //TODO: try PIPPENGER_BLOCK_SIZE / 2
-    scan_and_reduce<<<NUM_OF_CHUNKS, PIPPENGER_BLOCK_SIZE>>>(out_arr, out_arr);
+    scan_and_reduce<<<NUM_OF_CHUNKS, SMALL_CHUNK_SIZE / 2>>>(out_arr, out_arr);
 
     //for debugging and tests only!
     cudaDeviceSynchronize();
-    final_reduce<<<1, PIPPENGER_BLOCK_SIZE>>>(out_arr);
+    final_reduce<<<1, NUM_OF_CHUNKS>>>(out_arr);
 
     cudaFree(histo_arr);
 }
@@ -812,7 +806,7 @@ DEVICE_FUNC __inline__ void large_histo_impl(affine_point* pt_arr, uint256_g* po
     while (idx < arr_end_pos)
     {
         affine_point& pt = pt_arr[idx];
-        uint key = get_key(power_arr[idx], chunk_num);
+        uint key = get_key(power_arr[idx], chunk_num, LARGE_C);
 
         uint real_key = REVERSE_INDEX(key, SMALL_CHUNK_SIZE);
 

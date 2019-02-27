@@ -94,8 +94,6 @@ static DEVICE_FUNC inline stage_one_data stage_one_mul_inv(const uint256_g& elem
 	return stage_one_data{R, k};
 }
 
-
-
 DEVICE_FUNC uint256_g FIELD_MUL_INV(const uint256_g& elem)
 {
 	auto data = stage_one_mul_inv(elem);
