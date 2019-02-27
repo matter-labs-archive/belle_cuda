@@ -115,7 +115,8 @@ DEVICE_FUNC inline void set_bit(uint256_g& x, uint32_t index)
 {
 	auto& num = x.n[index / 32];
 	auto pos = index % 32;
-	SET_BIT(num, pos);
+    num |= (1 << pos);
+	//SET_BIT(num, pos);
 }
 
 //initialization function
@@ -161,6 +162,10 @@ extern DEVICE_VAR CONST_MEMORY uint256_g CURVE_A_COEFF;
 extern DEVICE_VAR CONST_MEMORY uint256_g CURVE_B_COEFF;
 // generator G = [1, 2, 1]
 extern DEVICE_VAR CONST_MEMORY  ec_point CURVE_G;
+
+//this fconstant is used in Kasinski algorithm: that is fast field inversion in Montgomety form
+
+extern DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R_SQUARED;
 
 //a bunch of helpful structs
 //--------------------------------------------------------------------------------------------------------------------------------------------------------

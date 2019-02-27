@@ -20,6 +20,11 @@ DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R8 = { 0x7b7e725a, 0x22a90440, 0xdd
 
 DEVICE_VAR CONST_MEMORY uint256_g MAGIC_CONSTANT = { 0xb61f3f52, 0x4f082305, 0x5a1c72a3, 0x65e05aa4, 0xa0605617, 0x6e14116d, 0xb84c680a, 0xc19139c };
 
+//this fconstant is used in Kasinski algorithm: that is fast field inversion in Montgomety form
+
+DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R_SQUARED = { 0x538afa89, 0xf32cfc5b, 0xd44501fb, 0xb5e71911, 0x0a417ff6, 0x47ab1eff, 0xcab8351f, 0x6d89f71 };
+
+
 //elliptic curve params
 
 DEVICE_VAR CONST_MEMORY uint256_g CURVE_A_COEFF = { 0, 0, 0, 0, 0, 0, 0, 0 };

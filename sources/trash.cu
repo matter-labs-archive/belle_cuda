@@ -2751,5 +2751,79 @@ void CUB_reduce_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* 
 #endif
 
 
+p = 21888242871839275222246405745257275088696311157297823662689037894645226208583
+r = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+
+base_field = GF(p)
+curve = EllipticCurve(base_field, [0, 3]);
+G = curve(1, 2, 1)
+
+R = base_field(2 ^ 256)
+
+def to_mont_form(x):
+    return x * R
+
+def from_mont_form(x):
+    return x / R
+
+
+def mont_inv(x):
+    a = from_mont_form(x) ^ (-1)
+    return to_mont_form(a)
+
+def mont_mul(a, b):
+    return a * b / R
+
+def Kasinski_algo(x):
+    U = p
+    V = x
+    R = 0
+    S = 1
+    k = 0
+    while V > 0:
+        if (U % 2 == 0):
+            U = U / 2
+            S = 2 * S
+        elif (V % 2 == 0):
+            V = V / 2
+            R = 2 * R
+        elif (U > V):
+            U = (U - V ) / 2
+            R = R + S
+            S = 2 * S
+        else:
+            V = (V - U ) / 2
+            S = S + R
+            R = 2 * R
+        k = k +1
+    if (R >= p):
+        R = R - p
+    return (p - R, k)
+    
+    
+x = 0x001eccd03356f7b8e40123519a541539c16e68ebf437d1a1e9ad2977aba01e60
+
+
+a = 0x2e23e7a5433d5e3285f09bc1a8906294407a94c2b09eb52fc15985eeff121223
+
+print base_field(a) == mont_inv(x)
+elem, k = Kasinski_algo(x)
+
+print "elem: ", hex(elem)
+print "k :", k
+
+y = base_field(elem)
+z = base_field(2 ^ (512 - k))
+
+q = mont_mul(y, z)
+print hex(int(q))
+print mont_mul(q, R^2) == mont_inv(x)
+print hex(int(mont_mul(q, R^2)))
+
+print 512 - 354
+print int(158 / 32)
+print 158 % 32
+
+
 
 

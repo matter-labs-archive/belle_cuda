@@ -87,7 +87,9 @@ static DEVICE_FUNC inline stage_one_data stage_one_mul_inv(const uint256_g& elem
 	}
 
 	if (CMP(R, BASE_FIELD_P) >= 0)
-		R = FIELD_SUB(R, BASE_FIELD_P);
+		R = SUB(R, BASE_FIELD_P);
+
+	R = SUB(BASE_FIELD_P, R);
 
 	return stage_one_data{R, k};
 }
@@ -97,20 +99,31 @@ static DEVICE_FUNC inline stage_one_data stage_one_mul_inv(const uint256_g& elem
 DEVICE_FUNC uint256_g FIELD_MUL_INV(const uint256_g& elem)
 {
 	auto data = stage_one_mul_inv(elem);
-	print2_uint256(data.almost_mont_inverse);
 	if (data.k == R_LOG)
 	{
 		return MONT_MUL(data.almost_mont_inverse, BASE_FIELD_R2);
 	}
 	else
 	{
-		//TODO: handle the case if k < R (in bit length)
-		
+		uint32_t n = 2 * R_LOG - data.k;
 		auto res = uint256_g{0, 0, 0, 0, 0, 0, 0, 0};
-		printf("k: %d\n", data.k);
-		set_bit(res, 2 * R_LOG - data.k);
-		res = MONT_MUL(res, data.almost_mont_inverse);
-		return MONT_MUL(res, BASE_FIELD_R2);
+		
+		if (n < R_LOG)
+		{		
+			set_bit(res, n);
+			res = MONT_MUL(data.almost_mont_inverse, res);
+		}
+		else if (n == R_LOG + 1)
+		{
+			res = MONT_MUL(data.almost_mont_inverse,  BASE_FIELD_R2);
+		}
+		else
+		{
+			//here n == R_LOG_2 + 2
+			res = MONT_MUL(data.almost_mont_inverse,  BASE_FIELD_R4);
+		}
+
+		return MONT_MUL(res, BASE_FIELD_R_SQUARED);
 	}
 }
 
