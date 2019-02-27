@@ -774,7 +774,7 @@ void small_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_po
 
 #define LARGE_C 16
 #define LARGE_CHUNK_SIZE 65536
-#define SCAN_BLOCK_SIZE 256
+#define SCAN_BLOCK_SIZE 128
 
 struct kernel_geometry
 {
@@ -808,7 +808,7 @@ DEVICE_FUNC __inline__ void large_histo_impl(affine_point* pt_arr, uint256_g* po
         affine_point& pt = pt_arr[idx];
         uint key = get_key(power_arr[idx], chunk_num, LARGE_C);
 
-        uint real_key = REVERSE_INDEX(key, SMALL_CHUNK_SIZE);
+        uint real_key = REVERSE_INDEX(key, LARGE_CHUNK_SIZE);
 
         bool leaveLoop = false;
         while (!leaveLoop)
@@ -833,11 +833,11 @@ __global__ void init_large_histo(ec_point* bins, Lock* locks)
     uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / LARGE_C;
 
     size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
-    while (idx < LARGE_CHUNK_SIZE * NUM_OF_CHUNKS);
+    while (idx < LARGE_CHUNK_SIZE * NUM_OF_CHUNKS)
     {
         locks[idx].init();
         bins[idx] = point_at_infty();
-        idx += blockDim.x;
+        idx += blockDim.x * gridDim.x;
     }
 }
 
@@ -856,6 +856,7 @@ void BUILD_HISTOGRAM(affine_point* pt_arr, uint256_g* power_arr, ec_point* bins,
 {
     {
         kernel_geometry geometry = find_optimal_geometry(init_large_histo, 0, smCount);
+        std::cout << geometry.gridSize << ", " <<  geometry.blockSize << std::endl;
         init_large_histo<<<geometry.gridSize, geometry.blockSize>>>(bins, locks);
     }
        
@@ -885,7 +886,7 @@ void BUILD_HISTOGRAM(affine_point* pt_arr, uint256_g* power_arr, ec_point* bins,
 DEVICE_FUNC void block_level_prescan(const ec_point* in_arr, ec_point* out_arr, ec_point* block_sums)
 {
     //TODO: temp array size is too small
-    __shared__ ec_point temp[SCAN_BLOCK_SIZE];
+    __shared__ ec_point temp[SCAN_BLOCK_SIZE * 2];
     
     uint tid = threadIdx.x;
     uint offset = 1;
@@ -976,7 +977,8 @@ __global__ void adjust_incr(ec_point* in_arr, ec_point* out_arr, ec_point* incr_
 	size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
 	while (tid < num_of_elems)
     {   
-        out_arr[tid] = ECC_ADD(in_arr[tid], incr_arr[tid / SCAN_BLOCK_SIZE]);      
+        out_arr[tid] = ECC_ADD(in_arr[tid], incr_arr[tid / SCAN_BLOCK_SIZE]);
+        tid += blockDim.x * gridDim.x;     
 	}
 }
 
@@ -1024,10 +1026,10 @@ __global__ void reduce(ec_point* in_arr, ec_point* out_arr, Lock* locks, uint BL
     uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / LARGE_C;
 
     size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
-    while (idx < LARGE_CHUNK_SIZE * NUM_OF_CHUNKS);
+    while (idx < LARGE_CHUNK_SIZE * NUM_OF_CHUNKS)
     {
         out_arr[idx] = point_at_infty();
-        idx += blockDim.x;
+        idx += blockDim.x * gridDim.x;
     }
 
     uint chunk_num = blockIdx.x / BLOCKS_PER_BIN;
@@ -1091,34 +1093,37 @@ __global__ void final_shrinking(ec_point* arr, ec_point* total, size_t gap)
 //Large Pippenger driver
 //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-void large_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+void large_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out, size_t arr_len)
 {
     Lock* locks = nullptr;
     ec_point* temporary_array = nullptr;
+    ec_point* out_temp_arr = nullptr;
+
 
     constexpr uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / LARGE_C;
     
-    cudaMalloc((void **)&locks, NUM_OF_CHUNKS * LARGE_CHUNK_SIZE * sizeof(Lock));
-    cudaMalloc((void **)&temporary_array, NUM_OF_CHUNKS * LARGE_CHUNK_SIZE * sizeof(ec_point));
+    cudaError_t cudaStatus = cudaMalloc((void **)&locks, NUM_OF_CHUNKS * LARGE_CHUNK_SIZE * sizeof(Lock));
+    if (cudaStatus != cudaSuccess)
+        std::cout << "Error!" << std::endl;
+    cudaStatus = cudaMalloc((void **)&temporary_array, NUM_OF_CHUNKS * LARGE_CHUNK_SIZE * sizeof(ec_point));
+    if (cudaStatus != cudaSuccess)
+        std::cout << "Error!" << std::endl;
+    cudaMalloc((void **)&out_temp_arr, NUM_OF_CHUNKS * LARGE_CHUNK_SIZE * sizeof(ec_point));
 
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0);
 	uint32_t smCount = prop.multiProcessorCount;
 
     BUILD_HISTOGRAM(point_arr, power_arr, temporary_array, locks, arr_len, smCount);
-    SCAN_ARRAY(temporary_array, out_arr, smCount);
-    REDUCE_ARRAY(temporary_array, out_arr, locks, smCount);
+    cudaMemcpy(out, temporary_array, 65536 * sizeof(ec_point), cudaMemcpyDeviceToDevice);
+    // SCAN_ARRAY(temporary_array, out_temp_arr, smCount);
+    // REDUCE_ARRAY(temporary_array, out_temp_arr, locks, smCount);
 
-    final_shrinking<<<1, NUM_OF_CHUNKS>>>(out_arr, out_arr, 1);
+    // final_shrinking<<<1, NUM_OF_CHUNKS>>>(out_temp_arr, out, 1);
     
     cudaFree(locks);
     cudaFree(temporary_array);
+    cudaFree(out_temp_arr);
 }
-
-
-    
-   
-
-
 
 
