@@ -10,6 +10,7 @@ execute_process(COMMAND ${OUTPUTFILE} RESULT_VARIABLE CUDA_RETURN_CODE OUTPUT_VA
 
 if(${CUDA_RETURN_CODE} EQUAL 0)
     message(STATUS "GPU Architecture: ${GPU_ARCH}")
+    
     string(APPEND CMAKE_CUDA_FLAGS " -gencode arch=compute_${GPU_ARCH},code=sm_${GPU_ARCH}")
 else()
     message( FATAL_ERROR ${GPU_ARCH})

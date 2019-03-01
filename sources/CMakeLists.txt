@@ -2,7 +2,8 @@ add_executable(cuda_benches main.cu basic_arithmetic.cu constants.cu kernels.cu 
     mul_256_to_512.cu square_256_to_512.cu ell_point.cu ecc_exp.cu CUDA_init.cu finitefield.cu multiexp.cu)
 target_compile_features(cuda_benches PUBLIC cxx_std_14)
 
-target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES)
+#target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES_INPUT)
+target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES_OUTPUT)
 target_compile_definitions(cuda_benches PRIVATE ZERO_BANK_CONFLICTS)
  
 # We need to explicitly state that we need all CUDA files in the 
@@ -10,7 +11,7 @@ target_compile_definitions(cuda_benches PRIVATE ZERO_BANK_CONFLICTS)
 # could be called by other libraries and executables
 set_target_properties(cuda_benches PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
-target_include_directories(cuda_benches PRIVATE ${PROJECT_SOURCE_DIR}/depends/CUB)
+#target_include_directories(cuda_benches PRIVATE ${PROJECT_SOURCE_DIR}/depends/CUB)
 
 #Checking all of the routines for correctness
 option(WITH_CORRECTNESS_CHECK "check correctness of all routines" OFF)
