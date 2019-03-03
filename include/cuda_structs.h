@@ -135,9 +135,9 @@ bool CUDA_init();
 
 //curve order field
 
-extern DEVICE_VAR CONST_MEMORY uint256_g CURVE_GROUP_P; 
-extern DEVICE_VAR CONST_MEMORY uint256_g CURVE_GROUP_R; 
-extern DEVICE_VAR CONST_MEMORY uint32_t CURVE_GROUP_N;
+extern DEVICE_VAR CONST_MEMORY uint256_g EMBEDDED_FIELD_P; 
+extern DEVICE_VAR CONST_MEMORY uint256_g EMBEDDED_FIELD_R; 
+extern DEVICE_VAR CONST_MEMORY uint32_t EMBEDDED_FIELD_N;
 
 //base field
 
@@ -166,6 +166,11 @@ extern DEVICE_VAR CONST_MEMORY  ec_point CURVE_G;
 //this fconstant is used in Kasinski algorithm: that is fast field inversion in Montgomety form
 
 extern DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R_SQUARED;
+
+//this are used for FFT
+
+extern DEVICE_FUNC size_t ROOTS_OF_UNTY_ARR_LEN;
+extern DEVICE_FUNC CONST_MEMORY uint256_g EMBEDDED_FIELD_ROOTS_OF_UNITY[]; 
 
 //a bunch of helpful structs
 //--------------------------------------------------------------------------------------------------------------------------------------------------------

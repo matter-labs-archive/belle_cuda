@@ -1,5 +1,5 @@
 add_executable(cuda_benches main.cu basic_arithmetic.cu constants.cu kernels.cu mont_mul.cu mul_128_to_256.cu
-    mul_256_to_512.cu square_256_to_512.cu ell_point.cu ecc_exp.cu CUDA_init.cu finitefield.cu multiexp.cu)
+    mul_256_to_512.cu square_256_to_512.cu ell_point.cu ecc_exp.cu CUDA_init.cu finitefield.cu multiexp.cu FFT.cu)
 target_compile_features(cuda_benches PUBLIC cxx_std_14)
 
 #target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES_INPUT)
