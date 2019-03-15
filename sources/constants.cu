@@ -24,6 +24,9 @@ DEVICE_VAR CONST_MEMORY uint256_g MAGIC_CONSTANT = { 0xb61f3f52, 0x4f082305, 0x5
 
 DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R_SQUARED = { 0x538afa89, 0xf32cfc5b, 0xd44501fb, 0xb5e71911, 0x0a417ff6, 0x47ab1eff, 0xcab8351f, 0x6d89f71 };
 
+//this is required for experiemental version of mont mul
+
+DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_N_LARGE = { 0xe4866389, 0x87d20782, 0x1eca6ac9, 0x9ede7d65, 0x1833da80, 0xd8afcbd0, 0x91888c6b, 0xf57a22b7 };
 
 //elliptic curve params
 

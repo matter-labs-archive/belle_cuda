@@ -2852,6 +2852,47 @@ ARR_LEN = NUM_OF_CHUNKS * LARGE_CHUNK_SIZE
 print NUM_OF_CHUNKS
 print ARR_LEN
 
+for(int32_t thread=blockIdx.x*blockDim.x+threadIdx.x;thread<count;thread+=blockDim.x*gridDim.x) {
+    int aindex=thread, bindex=thread, outindex=thread;
+    if(NULL!=a_indices) aindex=a_indices[thread%a_indices_count];
+    if(NULL!=b_indices) bindex=b_indices[thread%b_indices_count];
+    if(NULL!=out_indices) outindex=out_indices[thread];
+
+    data=a_data + aindex%a_count;
+    #pragma unroll
+    for(int index=0;index<a_size;index++) {
+      if(index<a_len)
+        A[index]=data[index*a_stride];
+      else
+        A[index]=0;
+    }
+
+    data=b_data + bindex%b_count;
+    #pragma unroll
+    for(int index=0;index<b_size;index++) {
+      if(index<b_len)
+        B[index]=data[index*b_stride];
+      else
+        B[index]=0;
+    }
+
+    mul(P, A, B);
+
+    data=p_data + outindex;
+    #pragma unroll
+    for(int index=0;index<a_size+b_size;index++)
+      if(index<p_len)
+        data[index*p_stride]=P[index];
+
+    for(int index=a_size+b_size;index<p_len;index++)
+      data[index*p_stride]=0;
+
+
+
+
+
+
+
 
 
 

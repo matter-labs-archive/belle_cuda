@@ -167,6 +167,10 @@ extern DEVICE_VAR CONST_MEMORY  ec_point CURVE_G;
 
 extern DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_R_SQUARED;
 
+//this is required for experiemental version of mont mul
+
+extern DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_N_LARGE;
+
 //this are used for FFT
 
 extern DEVICE_FUNC size_t ROOTS_OF_UNTY_ARR_LEN;
