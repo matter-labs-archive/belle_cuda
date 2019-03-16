@@ -213,31 +213,30 @@ DEVICE_FUNC void asm_mul_warp_based(const uint32_t* A, const uint32_t* B, uint32
             "ld.global.u32 [OUT + %laneid + 8], v;\n\t" )
 }
 
-#define THREADS_PER_OP 8
+#define THREADS_PER_MUL 8
 
 __global__ void warp_based_mul_kernel(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
 {
-    size_t tid = (threadIdx.x + blockIdx.x * blockDim.x;) / THREADS_PER_OP;
+    size_t tid = (threadIdx.x + blockIdx.x * blockDim.x;) / THREADS_PER_MUL;
 	while (tid < arr_len)
 	{
 		const uint32_t* A = &((a_arr + tid)->n[0]);
         const uint32_t* B = &((b_arr + tid)->n[0]);
         uint32_t* C = &((c_arr + tid)->n[0]);
-        asm_mul_warp_based(A, B, C) 
-            c_arr[tid] = func_name(a_arr[tid], b_arr[tid]);\
-		tid += (blockDim.x * gridDim.x;) / WARP_SIZE\
-	}\
-}\
-\
-void func_name##_driver_per_warp(const ec_point* a_arr, const uint256_g* b_arr, ec_point* c_arr, size_t count)\
-{\       
-    cudaDeviceProp prop;\
-    cudaGetDeviceProperties(&prop, 0);\
-    uint32_t smCount = prop.multiProcessorCount;\   
-    geometry2 geometry = find_geometry2(func_name##_kernel_per_warp, 0, uint32_t smCount);\
-\
-    std::cout << "Grid size: " << geometry.gridSize << ",  blockSize: " << geometry.blockSize << std::endl;\
-    func_name##_kernel_per_warp<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, count);\
+        asm_mul_warp_based(A, B, C);
+		tid += (blockDim.x * gridDim.x;) / THREADS_PER_OP;
+	}
+}
+
+void warp_based_mul_driver(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
+{
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    uint32_t smCount = prop.multiProcessorCount;   
+    geometry2 geometry = find_geometry2(warp_based_mul_kernel, 0, uint32_t smCount);
+
+    std::cout << "Grid size: " << geometry.gridSize << ",  blockSize: " << geometry.blockSize << std::endl;
+    warp_based_mul_kernel<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, arr_len);
 }
 
 DEVICE_FUNC void add_uint512_in_place_asm(uint512_g& lhs, const uint512_g& rhs)
@@ -258,17 +257,11 @@ DEVICE_FUNC void add_uint512_in_place_asm(uint512_g& lhs, const uint512_g& rhs)
             "addc.cc.u32     %13, %13, %29;\n\t"
             "addc.cc.u32     %14, %14, %30;\n\t"
             "addc.u32        %15, %15, %31;\n\t"
-            :   "+r"(lhs.n[0]), "+r"(lhs.n[1]), "+r"(lhs.n[2]), "+r"(lhs.n[3]), "+r"(lhs.n[4]), "r"(lhs.n[5]), "r"(lhs.n[6]), "r"(lhs.n[7]),
-				"+r"(rhs.n[0]), "r"(rhs.n[1]), "r"(rhs.n[2]), "r"(rhs.n[3]), "r"(rhs.n[4]), "r"(rhs.n[5]), "r"(rhs.n[6]), "r"(rhs.n[7]));        		
-			: "r"(lhs.n[0]), "r"(lhs.n[1]), "r"(lhs.n[2]), "r"(lhs.n[3]),
-				    "r"(lhs.n[4]), "r"(lhs.n[5]), "r"(lhs.n[6]), "r"(lhs.n[7]),
-				    "r"(rhs.n[0]), "r"(rhs.n[1]), "r"(rhs.n[2]), "r"(rhs.n[3]),
-				    "r"(rhs.n[4]), "r"(rhs.n[5]), "r"(rhs.n[6]), "r"(rhs.n[7]));
+            :   "+r"(lhs.n[0]), "+r"(lhs.n[1]), "+r"(lhs.n[2]), "+r"(lhs.n[3]), "+r"(lhs.n[4]), "+r"(lhs.n[5]), "+r"(lhs.n[6]), "+r"(lhs.n[7]),
+				"+r"(lhs.n[8]), "+r"(lhs.n[9]), "+r"(lhs.n[10]), "+r"(lhs.n[11]), "+r"(lhs.n[12]), "+r"(lhs.n[13]), "+r"(lhs.n[14]), "+r"(lhs.n[15])        		
+			:   "r"(rhs.n[0]), "r"(rhs.n[1]), "r"(rhs.n[2]), "r"(rhs.n[3]), "r"(rhs.n[4]), "r"(rhs.n[5]), "r"(rhs.n[6]), "r"(rhs.n[7]),
+				"r"(rhs.n[8]), "r"(rhs.n[9]), "r"(rhs.n[10]), "r"(rhs.n[11]), "r"(rhs.n[12]), "r"(rhs.n[13]), "r"(rhs.n[14]), "r"(rhs.n[15]));
 }
-
-//16 threads are used to calculate one operation
-
-#define ECC_THREADS_PER_OP 16
 
 //LARGE REDC
 //TEMP is 512 bits
@@ -279,27 +272,54 @@ DEVICE_FUNC void mont_mul_warp_based(const uint32_t* A, const uint32_t* B, uint3
     asm_mul_warp_based(TEMP1, &BASE_FIELD_N_LARGE.n[0], TEMP2);
     asm_mul_warp_based(TEMP2, &BASE_FIELD_P.n[0], TEMP2);
 
-    
-    if (threadIdx.x % MUL_THREADS_PER_OP == 0)
+    //Here all operations will be held only by one thread but it doesn't seem to have any sugnificant impact
+
+    if (threadIdx.x % MUL_THREADS_PER_MUL == 0)
     {
-        uint512_g x = { TEMP[8], TEMP[9], TEMP[10], TEMP[11], TEMP[12], TEMP[13], TEMP[14], TEMP[15], TEMP[8], TEMP[9], TEMP[10], TEMP[11], TEMP[12], TEMP[13], TEMP[14], TEMP[15] };
-        uint512_g y = { TEMP[8], TEMP[9], TEMP[10], TEMP[11], TEMP[12], TEMP[13], TEMP[14], TEMP[15], TEMP[8], TEMP[9], TEMP[10], TEMP[11], TEMP[12], TEMP[13], TEMP[14], TEMP[15] };
+        uint512_g x = { TEMP1[0], TEMP1[1], TEMP1[2], TEMP1[3], TEMP1[4], TEMP1[5], TEMP1[6], TEMP1[7], 
+            TEMP1[8], TEMP1[9], TEMP1[10], TEMP1[11], TEMP1[12], TEMP1[13], TEMP1[14], TEMP1[15] };
+        uint512_g y = { TEMP2[0], TEMP2[1], TEMP2[2], TEMP2[3], TEMP2[4], TEMP2[5], TEMP2[6], TEMP2[7], 
+            TEMP2[8], TEMP2[9], TEMP2[10], TEMP2[11], TEMP2[12], TEMP2[13], TEMP2[14], TEMP2[15] };
+
+        add_uint512_in_place_asm(x, y);
+
+        uint256_g& z = x.l[1];
+        if (CMP(z, BASE_FIELD_P) >= 0)
+		    z = SUB(z, BASE_FIELD_P);
+
+        //it can be optimized via vectorized load
+
+        #pragma unroll
+        for (uint32_t i = 0; i < N; i++)
+        {
+            OUT[i] = z.n[i];
+        }
     }
-    
-    m ← ((T mod R)N′) mod R
-    t ← (T + mN) / R
-    if t ≥ N then
-        return t − N
-    else
-        return t
 }
+
+//16 threads are used to calculate one operation
+
+#define THREADS_PER_ECC_ADD 16
 
 DEVICE_FUNC void ECC_add_proj_warp_based(const ec_point* A, const ec_point* B, ec_point* C)
 {
-    if (is_infinity(left))
-		return right;
-	if (is_infinity(right))
-		return left;
+    uint32_t exit_flag = 0;
+
+    if (threadIdx.x % THREADS_PER_ECC_ADD == 0)
+    {
+        if (is_infinity(*A))
+        {
+            *C = *B;
+            exit_flag = 1;
+        }
+	    else if (is_infinity(*B))
+        {
+		    *C = *A;
+            exit_flag = 1;
+        }
+    }
+
+    b[i].x = __shfl_down_sync(0xFFFFFFFF, a[i].x, offset, width);
 
 	uint256_g U1, U2, V1, V2;
 	U1 = MONT_MUL(left.z, right.y);

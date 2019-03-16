@@ -83,6 +83,7 @@ struct uint512_g
     {
         uint32_t n[16];
         uint64_t nn[8];
+        uint256_g l[2];
     };
 };
 

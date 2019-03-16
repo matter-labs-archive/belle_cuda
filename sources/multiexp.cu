@@ -1110,6 +1110,8 @@ __global__ void final_shrinking(ec_point* arr, ec_point* total, size_t gap)
 //Large Pippenger driver
 //---------------------------------------------------------------------------------------------------------------------------------------------------
 
+//TODO: Check scanning for the whole range)
+
 void large_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_point* out, size_t arr_len)
 {
     //TODO: do we really need CUDA device synchronize?
@@ -1153,6 +1155,201 @@ void large_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_po
 }
 
 
-//Check scanning for the whole range)
+//Version of Pippenger algorithm based on sorting networks and additional memory
+//---------------------------------------------------------------------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//first step: sorting
+
+DEVICE_FUNC __inline__ void exchange_points(ec_point& x, ec_point& y)
+{
+    //ec_point = 3 * 8  = 24 int = 6 int4
+    int4* a = reinterpret_cast<int4*>(&x);
+    int4* b = reinterpret_cast<int4*>(&y);
+
+    for (unsigned i = 0; i < 6; i++)
+    {
+        a[i] = a[i] ^ b[i];
+        b[i] = a[i] ^ b[i];
+        a[i] = a[i] ^ b[i];
+    }
+}
+
+DEVICE_FUNC __inline__ void copy_point(const ec_point& source, ec_point& dest)
+{
+    //ec_point = 3 * 8  = 24 int = 6 int4
+    int4* a = reinterpret_cast<const int4*>(&source);
+    int4* b = reinterpret_cast<int4*>(&dest);
+
+    for (unsigned i = 0; i < 6; i++)
+    {
+        b[i] = a[i];
+    }
+}
+
+DEVICE_FUNC __inline__ void compare_exchange_points(ec_point& x, ec_point& y, uint key_x, uint key_y, bool ascending_order)
+{
+    bool exchange = (key_x > key_y) ^ ascending;
+    if (exchange)
+        exchange_points(x, y); 
+}
+
+//NB: We are going to pad array length to 64 elem boundary: it should be done in main 
+
+DEVICE_FUNC __inline__ void bitonic_sort_step(ec_point* values, const uint256_g* powers, size_t arr_len, size_t j, size_t k, uint chunk_num)
+{
+    /* Sorting partners: i and ixj */
+    unsigned int i, ixj; 
+    size_t idx = threadIdx.x + blockDim.x * blockIdx.x - (arr_len / 2) * chunk_num;
+    i = idx + (idx / (k >> 1)) * (k >> 1);
+    ixj = i^j;
+
+    ec_point& a_val = values[i];
+    ec_point& b_val = values[ixj];
+    uint a_key = get_key(powers[i], chunk_num, LARGE_C);
+    uint b_key = get_key(powers[ixj], chunk_num, LARGE_C);
+    bool order = ((i & k) == 0);
+
+    compare_exchange_points(a_val, b_val, a_key, b_key, order);
+}
+
+DEVICE_FUNC __inline__ void bitonic_sort_chunk(ec_point* values, const uint256_g* powers, size_t arr_len, uint chunk_num)
+{
+    size_t j, k;
+
+    /* Major step */
+    for (k = 2; k <= arr_len; k <<= 1)
+    {
+        /* Minor step */
+        for (j = k >> 1; j > 0; j = j >> 1)
+        {
+            bitonic_sort_step(values, powers, arr_len, j, k, chunk_num);
+        }
+    }
+}
+
+__global__ void bitonic_sort(ec_point* values[], const uint256_g* powers, size_t arr_len, uint BLOCKS_PER_BIN)
+{
+    uint chunk_num = blockIdx.x / BLOCKS_PER_BIN;
+    bitonic_sort_chunk(values[chunk_num], powers, arr_len, chunk_num);
+} 
+
+//NB: here we do also scilently assume that array length is divisible by 64
+
+void init_bitonic_sort(ec_point* copied_values[], const ec_point* points, size_t arr_len)
+{
+    const uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / LARGE_C;
+    size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+    while (idx < arr_len)
+    {
+        const ec_point& source = points[idx];
+        
+        #pragma unroll
+        for( i = 0; i < NUM_OF_CHUNKS; i++)
+            copy_point(source, copied_values[i][idx]);
+        idx += blockDim.x * gridDim.x;
+    }
+}
+
+void SORT_ARRAY(const ec_point* points, const uint256_g* powers, ec_point* temporary_array, size_t arr_len, uint smCount)
+{
+    const uint NUM_OF_CHUNKS = MAX_POWER_BITLEN / LARGE_C;
+
+    ec_point copied_values[NUM_OF_CHUNKS];
+    for (uint i = 0; i < NUM_OF_CHUNKS; i++)
+        copied_values[i] = temporary_array + i * arr_len;
+ 
+    kernel_geometry init_geometry = find_optimal_geometry(init_bitonic_sort, 0, smCount);
+    init_bitonic_sort<<<init_geometry.gridSize, init_geometry.blockSize>>>(copied_values, points, arr_len);
+
+    kernel_geometry sort_geometry = find_optimal_geometry(bitonic_sort, 0, smCount);
+
+    uint NUM_OF_BLOCKS = arr_len * NUM_OF_CHUNKS / (2 * sort_geometry.blockSize);
+    bitonic_sort<<<NUM_OF_BLOCKS, sort_geometry.blockSize>>>()
+}
+
+//second step: counting occurencies
+
+//second step: reducing
+//------------------------------------------------------------------------------------------------------------------------------------------------
+
+__global__ void naive_multiexp_kernel_block_level_recursion(affine_point* point_arr, uint256_g* power_arr, ec_point* out_arr, size_t arr_len)
+{
+    ec_point acc = point_at_infty();
+    
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+	{   
+        ec_point x = ECC_EXP(point_arr[tid], power_arr[tid]);
+        acc = ECC_ADD(acc, x);
+        tid += blockDim.x * gridDim.x;
+	}
+
+    acc = blockReduceSum(acc);
+    
+    if (threadIdx.x == 0)
+        out_arr[blockIdx.x] = acc;
+}
+
+__global__ void naive_kernel_block_level_reduction(ec_point* in_arr, ec_point* out_arr, size_t arr_len)
+{
+    ec_point acc = point_at_infty();
+    
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+    {   
+        acc = ECC_ADD(acc, in_arr[tid]);
+        tid += blockDim.x * gridDim.x;
+	}
+
+    acc = blockReduceSum(acc);
+
+    if (threadIdx.x == 0)
+        out_arr[blockIdx.x] = acc;
+}
 
 
+DEVICE_FUNC void reduce_chunk(const ec_point* point_arr, ec_point* out, Lock* lock, size_t arr_len)
+{
+    ec_point acc = point_at_infty();
+    //printf("%d\n", arr_len);
+    
+    size_t tid = threadIdx.x;
+	while (tid < arr_len)
+	{   
+        acc = ECC_ADD(acc, point_arr[tid]);
+        tid += blockDim.x;
+	}
+
+    acc = blockReduceSum(acc);
+    if (threadIdx.x == 0)
+    {
+        lock->lock();
+        *out = ECC_ADD(*out, acc);
+        lock->unlock();
+    }
+}
+
+__global__ void init_reduce(ec_point* arr, size_t arr_len)
+{
+    size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+    while (idx < arr_len)
+    {
+        arr[idx] = point_at_infty();
+        idx += blockDim.x * gridDim.x;
+    }
+}
+
+//other steps: scanning and final shrinking are the same as in the previous algorims
+
+
+ ec_point* temporary_array = nullptr;
+    size_t temp_array_size = NUM_OF_CHUNKS * arr_len;
+
+    cudaError_t cudaStatus = cudaMalloc((void **)&temporary_array, temp_array_size * sizeof(ec_point));
+    if (cudaStatus != cudaSuccess)
+        std::cout << "Error!" << std::endl;
+
+
+cudaFree(tempporary_array);
