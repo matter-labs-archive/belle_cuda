@@ -161,7 +161,9 @@ void func_name##_driver_strided(uint256_g* a_arr, uint256_g* b_arr, uin256_g* c_
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-//warp-based montgomery multiplication and elliptic curve point addition
+//warp-based long multiplication and montgomery multiplication
+
+#define THREADS_PER_MUL 8
 
 #define UNROLLED_CYCLE_ITER(idx) \
 "shfl.sync.idx.b32  x, b, idx, 8;" \
@@ -179,13 +181,21 @@ void func_name##_driver_strided(uint256_g* a_arr, uint256_g* b_arr, uin256_g* c_
 "add.cc.u32 v, u, v;\n\t" \
 "addc.u32 u, t, 0;\n\t"
 
-DEVICE_FUNC void asm_mul_warp_based(const uint32_t* A, const uint32_t* B, uint32_t* OUT)
+//The following implementation is based on paper "A Warp-synchronous Implementation for Multiple-length Multiplication on the GPU"
+
+DEVICE_FUNC uint64_t asm_mul_warp_based(uint32_t A, const uint32_t B)
 {
-     asm (  ".reg .u32 a, b, x, y, u, v, c, t;\n\t"
+    uint64_t res;
+    
+    asm(    "{\n\t"  
+            ".reg .u32 a, b, x, y, u, v, c, t;\n\t"
             ".reg .pred p;\n\t"
 
-            "ld.global.u32 a, [A + %laneid];\n\t"
-            "ld.global.u32 b, [B + %laneid];\n\t"
+            // "ld.global.u32 a, [A + %laneid];\n\t"
+            // "ld.global.u32 b, [B + %laneid];\n\t"
+            "mov.b32 a, %0;\n\t"
+            "mov.b32 b, %1;\n\t"
+
             "mov.u32 u, 0;\n\t"
             "mov.u32 v, 0;\n\t"
             "mov.u32 c, 0;\n\t"
@@ -209,22 +219,33 @@ DEVICE_FUNC void asm_mul_warp_based(const uint32_t* A, const uint32_t* B, uint32
             "bra L1;\n\t"
             
             "L2:\n\t"
-            "st.global.u32 [OUT + %laneid], c;\n\t"
-            "ld.global.u32 [OUT + %laneid + 8], v;\n\t" )
+
+            // "st.global.u32 [OUT + %laneid], c;\n\t"
+            // "st.global.u32 [OUT + %laneid + 8], v;\n\t"
+            "mov.b64 %2, {c, v};}\n\t"  
+            : "=l"(res) : "r"(A), "r"(B));
+    
+    return res;
 }
 
-#define THREADS_PER_MUL 8
+//I bet there must be a faster solution!
+//TODO: have a look at https://ieeexplore.ieee.org/document/5669278
 
 __global__ void warp_based_mul_kernel(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
 {
-    size_t tid = (threadIdx.x + blockIdx.x * blockDim.x;) / THREADS_PER_MUL;
-	while (tid < arr_len)
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    size_t idx = tid / THREADS_PER_MUL;
+    size_t lane = tid % THREADS_PER_MUL;
+	while (idx < arr_len)
 	{
-		const uint32_t* A = &((a_arr + tid)->n[0]);
-        const uint32_t* B = &((b_arr + tid)->n[0]);
-        uint32_t* C = &((c_arr + tid)->n[0]);
-        asm_mul_warp_based(A, B, C);
-		tid += (blockDim.x * gridDim.x;) / THREADS_PER_OP;
+		uint32_t A = a_arr[tid].n[lane];
+        uint32_t B = b_arr[tid].n[lane];
+        uint64_t C = asm_mul_warp_based(A, B, C);
+
+        c_arr[tid].n[lane] = C.low;
+        c_arr[tid].n[lane + N] = C.high;
+
+		tid += (blockDim.x * gridDim.x;) / THREADS_PER_MUL;
 	}
 }
 
@@ -297,15 +318,30 @@ DEVICE_FUNC void mont_mul_warp_based(const uint32_t* A, const uint32_t* B, uint3
     }
 }
 
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//warp-based montgomery multiplication and elliptic curve point addition
+
 //16 threads are used to calculate one operation
 
 #define THREADS_PER_ECC_ADD 16
+
+DEVICE_FUNC __inline__ bool is_leader_lane()
+{
+    return (threadIdx.x % THREADS_PER_ECC_ADD == 0);
+}
+
+DEVICE_FUNC __inline__ uint256_g& subwarp_chooser()
+
+
 
 DEVICE_FUNC void ECC_add_proj_warp_based(const ec_point* A, const ec_point* B, ec_point* C)
 {
     uint32_t exit_flag = 0;
 
-    if (threadIdx.x % THREADS_PER_ECC_ADD == 0)
+    if (is_leader_lane())
     {
         if (is_infinity(*A))
         {
@@ -319,7 +355,11 @@ DEVICE_FUNC void ECC_add_proj_warp_based(const ec_point* A, const ec_point* B, e
         }
     }
 
-    b[i].x = __shfl_down_sync(0xFFFFFFFF, a[i].x, offset, width);
+    exit_flag = __shfl_sync(0xFFFFFFFF, exit_flag, 0, THREADS_PER_ECC_ADD);
+    if (exit_flag)
+        return;
+
+    uint32_t x, y;
 
 	uint256_g U1, U2, V1, V2;
 	U1 = MONT_MUL(left.z, right.y);
@@ -570,12 +610,5 @@ void func_name##_driver_per_warp(const ec_point* a_arr, const uint256_g* b_arr, 
     std::cout << "Grid size: " << geometry.gridSize << ",  blockSize: " << geometry.blockSize << std::endl;\
     func_name##_kernel_per_warp<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, count);\
 }
-
-//--------------------------------------------------------------------------------------------------------------------------------------------------------
-//--------------------------------------------------------------------------------------------------------------------------------------------------------
-//--------------------------------------------------------------------------------------------------------------------------------------------------------
-
-//Pippenger algorithm using sorting and additional memory instead of atomics and histogramming
-//we are going to implement bitonic  sort)
 
 
