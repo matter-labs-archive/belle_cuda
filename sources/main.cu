@@ -434,7 +434,7 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 
 
 size_t max_bench_len = 1000000;
-size_t bench_len = 128;
+size_t bench_len = 512;
 
 const char* OUTPUT_FILE = "benches.txt";
 
