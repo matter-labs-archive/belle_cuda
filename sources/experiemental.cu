@@ -238,12 +238,12 @@ __global__ void warp_based_mul_kernel(const uint256_g* a_arr, const uint256_g* b
     size_t lane = tid % THREADS_PER_MUL;
 	while (idx < arr_len)
 	{
-		uint32_t A = a_arr[tid].n[lane];
-        uint32_t B = b_arr[tid].n[lane];
+		uint32_t A = a_arr[idx].n[lane];
+        uint32_t B = b_arr[idx].n[lane];
         uint64_t C = asm_mul_warp_based(A, B, C);
 
-        c_arr[tid].n[lane] = C.low;
-        c_arr[tid].n[lane + N] = C.high;
+        c_arr[idx].n[lane] = C.low;
+        c_arr[idx].n[lane + N] = C.high;
 
 		tid += (blockDim.x * gridDim.x;) / THREADS_PER_MUL;
 	}
@@ -262,6 +262,29 @@ void warp_based_mul_driver(const uint256_g* a_arr, const uint256_g* b_arr, uint2
 
 //LARGE REDC Montgomety mul
 
+DEVICE_FUNC __inline__ void long_in_place_add(uint32_t& A, uint32_t B, uint32_t& carry)
+{
+     asm(   "{\n\t"  
+            "add.cc.u32 %0, %0, %2;\n\t"
+            "addc.u32 %1, 0, 0;\n\t" 
+            : "+r"(A), "=r"(carry) : "r"(B));
+}
+
+DEVICE_FUNC __inline__ void long_in_place_sub(uint32_t& A, uint32_t B, uint32_t& carry)
+{
+     asm(   "{\n\t"  
+            "sub.cc.u32 %0, %0, %2;\n\t"
+            "addc.u32 %1, 0, 0;\n\t" 
+            : "+r"(A), "=r"(carry) : "r"(B));
+}
+
+#define MAX_UINT32_VAL 0xffffffff
+
+DEVICE_FUNC __inline__ bool CHECK_CONDITIONS(uint32_t cond1_mask, uint32_t cond2_mask, uint32_t warp_idx)
+{
+    return ( __clz((cond2_mask << ((3 - warp_idx) * THREADS_PER_MUL)) ^ MAX_UINT32_VAL) >= __clz(cond1_mask << ((3 - warp_idx) * THREADS_PER_MUL)));
+}
+
 DEVICE_FUNC void mont_mul_warp_based(const uint256_g& A, const uint256_g& B, uint256_g& OUT)
 {
     // T = A * B
@@ -270,64 +293,77 @@ DEVICE_FUNC void mont_mul_warp_based(const uint256_g& A, const uint256_g& B, uin
     //if t >= N then t = t - N
        
     size_t lane = tid % THREADS_PER_MUL;
+    size_t warp_idx = tid / THREADS_PER_MUL;
+    uint32_t mask = (THREADS_PER_MUL - 1) << (warp_idx * THREADS_PER_MUL);
+
     uint64_t temp1 = asm_mul_warp_based(A.n[lane], B.n[lane]);
     uint64_t temp2 = asm_mul_warp_based(temp1.low, BASE_FIELD_N_LARGE.n[lane]);
     temp2 = asm_mul_warp_based(temp2, BASE_FIELD_P.n[lane]);
 
-    //Here all operations will be held only by one thread but it doesn't seem to have any sugnificant impact
+    //adding higher 8-words part
+    uint32_t carry = 0;
+    long_in_place_add(temp1.high, temp2.high, carry);
 
-    if (threadIdx.x % MUL_THREADS_PER_MUL == 0)
+    //we are going to check if there is overflow from lower 8-words part
+    uint32_t sum = temp1.low + temp2.low;
+    uint32_t cond1_mask = __ballot_sync(mask, sum < temp1.low);
+    uint32_t cond2_mask = _ballot_sync(mask, sum == MAX_UINT32_VAL);
+    if (lane == THREADS_PER_MUL - 1)
+        carry = (uint32_t)CHECK_CONDITIONS(cond1, cond2, warp_idx);
+
+    //propagate carry
+    while (__any_sync(mask, carry != 0))
     {
-        uint512_g x = { TEMP1[0], TEMP1[1], TEMP1[2], TEMP1[3], TEMP1[4], TEMP1[5], TEMP1[6], TEMP1[7], 
-            TEMP1[8], TEMP1[9], TEMP1[10], TEMP1[11], TEMP1[12], TEMP1[13], TEMP1[14], TEMP1[15] };
-        uint512_g y = { TEMP2[0], TEMP2[1], TEMP2[2], TEMP2[3], TEMP2[4], TEMP2[5], TEMP2[6], TEMP2[7], 
-            TEMP2[8], TEMP2[9], TEMP2[10], TEMP2[11], TEMP2[12], TEMP2[13], TEMP2[14], TEMP2[15] };
+        carry = shfl_up_sync(mask, carry, 1, THREADS_PER_MUL);
+        long_in_place_add(temp1.high, carry, carry);
+        if (lane == THREADS_PER_MUL - 1)
+            carry = 0;
+    }
 
-        add_uint512_in_place_asm(x, y);
+    //now temp1.high holds t, compare t with N:
+    cond1 = __ballot_sync(mask, temp1.high > BASE_FIELD_P.n[lane]);
+    cond2 = __ballot_sync(mask, temp1.high == BASE_FIELD_P.n[lane]);
+    if (CHECK_CONDITIONS(cons1, cond2, warp_idx))
+    {
+        //lane based substraction
+        long_in_place_sub(temp1.high, BASE_FIELD_P.n[lane], carry);
 
-        uint256_g& z = x.l[1];
-        if (CMP(z, BASE_FIELD_P) >= 0)
-		    z = SUB(z, BASE_FIELD_P);
-
-        //it can be optimized via vectorized load
-
-        #pragma unroll
-        for (uint32_t i = 0; i < N; i++)
+        //propagate borrow
+        while (__any_sync(mask, carry != 0))
         {
-            OUT[i] = z.n[i];
+            carry = shfl_up_sync(mask, carry, 1, THREADS_PER_MUL);
+            long_in_place_sub(temp1.high, carry, carry);
+  
         }
     }
+
+    OUT.n[lane] = temp1.high;
 }
 
-DEVICE_FUNC void mont_mul_warp_based(const uint256_g& A, const uint256_g& B,  OUT, uint32_t* TEMP1, uint32_t* TEMP2)
+__global__ void warp_based_mont_mul_kernel(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
 {
-    asm_mul_warp_based(A, B, TEMP1);
-    asm_mul_warp_based(TEMP1, &BASE_FIELD_N_LARGE.n[0], TEMP2);
-    asm_mul_warp_based(TEMP2, &BASE_FIELD_P.n[0], TEMP2);
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    size_t idx = tid / THREADS_PER_MUL;
+	while (idx < arr_len)
+	{
+		uint256_g& A = a_arr[tid];
+        uint256_g& B = b_arr[tid];
+        uint256_g& C = c_arr[tid];
 
-    //Here all operations will be held only by one thread but it doesn't seem to have any sugnificant impact
+        mont_mul_warp_based(A, B, C);
+		tid += (blockDim.x * gridDim.x;) / THREADS_PER_MUL;
+	}
+}
 
-    if (threadIdx.x % MUL_THREADS_PER_MUL == 0)
-    {
-        uint512_g x = { TEMP1[0], TEMP1[1], TEMP1[2], TEMP1[3], TEMP1[4], TEMP1[5], TEMP1[6], TEMP1[7], 
-            TEMP1[8], TEMP1[9], TEMP1[10], TEMP1[11], TEMP1[12], TEMP1[13], TEMP1[14], TEMP1[15] };
-        uint512_g y = { TEMP2[0], TEMP2[1], TEMP2[2], TEMP2[3], TEMP2[4], TEMP2[5], TEMP2[6], TEMP2[7], 
-            TEMP2[8], TEMP2[9], TEMP2[10], TEMP2[11], TEMP2[12], TEMP2[13], TEMP2[14], TEMP2[15] };
+void warp_based_mont_mul_driver(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
+{
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    uint32_t smCount = prop.multiProcessorCount;   
+    geometry2 geometry = find_geometry2(warp_based_mont_mul_kernel, 0, uint32_t smCount);
 
-        add_uint512_in_place_asm(x, y);
-
-        uint256_g& z = x.l[1];
-        if (CMP(z, BASE_FIELD_P) >= 0)
-		    z = SUB(z, BASE_FIELD_P);
-
-        //it can be optimized via vectorized load
-
-        #pragma unroll
-        for (uint32_t i = 0; i < N; i++)
-        {
-            OUT[i] = z.n[i];
-        }
-    }
+    std::cout << "Grid size: " << geometry.gridSize << ",  blockSize: " << geometry.blockSize << std::endl;
+    warp_based_mont_mul_kernel<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, arr_len);
 }
 
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
