@@ -260,34 +260,46 @@ void warp_based_mul_driver(const uint256_g* a_arr, const uint256_g* b_arr, uint2
     warp_based_mul_kernel<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, arr_len);
 }
 
-DEVICE_FUNC void add_uint512_in_place_asm(uint512_g& lhs, const uint512_g& rhs)
+//LARGE REDC Montgomety mul
+
+DEVICE_FUNC void mont_mul_warp_based(const uint256_g& A, const uint256_g& B, uint256_g& OUT)
 {
-	asm (	"add.cc.u32      %0,  %0,  %16;\n\t"
-         	"addc.cc.u32     %1,  %1,  %17;\n\t"
-            "addc.cc.u32     %2,  %2,  %18;\n\t"
-            "addc.cc.u32     %3,  %3,  %19;\n\t"
-            "addc.cc.u32     %4,  %4,  %20;\n\t"
-            "addc.cc.u32     %5,  %5,  %21;\n\t"
-            "addc.cc.u32     %6,  %6,  %22;\n\t"
-            "addc.u32        %7,  %7,  %23;\n\t"
-            "add.cc.u32      %8,  %8,  %24;\n\t"
-         	"addc.cc.u32     %9,  %9,  %25;\n\t"
-            "addc.cc.u32     %10, %10, %26;\n\t"
-            "addc.cc.u32     %11, %11, %27;\n\t"
-            "addc.cc.u32     %12, %12, %28;\n\t"
-            "addc.cc.u32     %13, %13, %29;\n\t"
-            "addc.cc.u32     %14, %14, %30;\n\t"
-            "addc.u32        %15, %15, %31;\n\t"
-            :   "+r"(lhs.n[0]), "+r"(lhs.n[1]), "+r"(lhs.n[2]), "+r"(lhs.n[3]), "+r"(lhs.n[4]), "+r"(lhs.n[5]), "+r"(lhs.n[6]), "+r"(lhs.n[7]),
-				"+r"(lhs.n[8]), "+r"(lhs.n[9]), "+r"(lhs.n[10]), "+r"(lhs.n[11]), "+r"(lhs.n[12]), "+r"(lhs.n[13]), "+r"(lhs.n[14]), "+r"(lhs.n[15])        		
-			:   "r"(rhs.n[0]), "r"(rhs.n[1]), "r"(rhs.n[2]), "r"(rhs.n[3]), "r"(rhs.n[4]), "r"(rhs.n[5]), "r"(rhs.n[6]), "r"(rhs.n[7]),
-				"r"(rhs.n[8]), "r"(rhs.n[9]), "r"(rhs.n[10]), "r"(rhs.n[11]), "r"(rhs.n[12]), "r"(rhs.n[13]), "r"(rhs.n[14]), "r"(rhs.n[15]));
+    // T = A * B
+    //m = ((T mod R) * N) mod R
+    //t = (T + m * p) / R
+    //if t >= N then t = t - N
+       
+    size_t lane = tid % THREADS_PER_MUL;
+    uint64_t temp1 = asm_mul_warp_based(A.n[lane], B.n[lane]);
+    uint64_t temp2 = asm_mul_warp_based(temp1.low, BASE_FIELD_N_LARGE.n[lane]);
+    temp2 = asm_mul_warp_based(temp2, BASE_FIELD_P.n[lane]);
+
+    //Here all operations will be held only by one thread but it doesn't seem to have any sugnificant impact
+
+    if (threadIdx.x % MUL_THREADS_PER_MUL == 0)
+    {
+        uint512_g x = { TEMP1[0], TEMP1[1], TEMP1[2], TEMP1[3], TEMP1[4], TEMP1[5], TEMP1[6], TEMP1[7], 
+            TEMP1[8], TEMP1[9], TEMP1[10], TEMP1[11], TEMP1[12], TEMP1[13], TEMP1[14], TEMP1[15] };
+        uint512_g y = { TEMP2[0], TEMP2[1], TEMP2[2], TEMP2[3], TEMP2[4], TEMP2[5], TEMP2[6], TEMP2[7], 
+            TEMP2[8], TEMP2[9], TEMP2[10], TEMP2[11], TEMP2[12], TEMP2[13], TEMP2[14], TEMP2[15] };
+
+        add_uint512_in_place_asm(x, y);
+
+        uint256_g& z = x.l[1];
+        if (CMP(z, BASE_FIELD_P) >= 0)
+		    z = SUB(z, BASE_FIELD_P);
+
+        //it can be optimized via vectorized load
+
+        #pragma unroll
+        for (uint32_t i = 0; i < N; i++)
+        {
+            OUT[i] = z.n[i];
+        }
+    }
 }
 
-//LARGE REDC
-//TEMP is 512 bits
-
-DEVICE_FUNC void mont_mul_warp_based(const uint32_t* A, const uint32_t* B, uint32_t* OUT, uint32_t* TEMP1, uint32_t* TEMP2)
+DEVICE_FUNC void mont_mul_warp_based(const uint256_g& A, const uint256_g& B,  OUT, uint32_t* TEMP1, uint32_t* TEMP2)
 {
     asm_mul_warp_based(A, B, TEMP1);
     asm_mul_warp_based(TEMP1, &BASE_FIELD_N_LARGE.n[0], TEMP2);

@@ -2889,7 +2889,29 @@ for(int32_t thread=blockIdx.x*blockDim.x+threadIdx.x;thread<count;thread+=blockD
 
 
 
-
+DEVICE_FUNC void add_uint512_in_place_asm(uint512_g& lhs, const uint512_g& rhs)
+{
+	asm (	"add.cc.u32      %0,  %0,  %16;\n\t"
+         	"addc.cc.u32     %1,  %1,  %17;\n\t"
+            "addc.cc.u32     %2,  %2,  %18;\n\t"
+            "addc.cc.u32     %3,  %3,  %19;\n\t"
+            "addc.cc.u32     %4,  %4,  %20;\n\t"
+            "addc.cc.u32     %5,  %5,  %21;\n\t"
+            "addc.cc.u32     %6,  %6,  %22;\n\t"
+            "addc.u32        %7,  %7,  %23;\n\t"
+            "add.cc.u32      %8,  %8,  %24;\n\t"
+         	"addc.cc.u32     %9,  %9,  %25;\n\t"
+            "addc.cc.u32     %10, %10, %26;\n\t"
+            "addc.cc.u32     %11, %11, %27;\n\t"
+            "addc.cc.u32     %12, %12, %28;\n\t"
+            "addc.cc.u32     %13, %13, %29;\n\t"
+            "addc.cc.u32     %14, %14, %30;\n\t"
+            "addc.u32        %15, %15, %31;\n\t"
+            :   "+r"(lhs.n[0]), "+r"(lhs.n[1]), "+r"(lhs.n[2]), "+r"(lhs.n[3]), "+r"(lhs.n[4]), "+r"(lhs.n[5]), "+r"(lhs.n[6]), "+r"(lhs.n[7]),
+				"+r"(lhs.n[8]), "+r"(lhs.n[9]), "+r"(lhs.n[10]), "+r"(lhs.n[11]), "+r"(lhs.n[12]), "+r"(lhs.n[13]), "+r"(lhs.n[14]), "+r"(lhs.n[15])        		
+			:   "r"(rhs.n[0]), "r"(rhs.n[1]), "r"(rhs.n[2]), "r"(rhs.n[3]), "r"(rhs.n[4]), "r"(rhs.n[5]), "r"(rhs.n[6]), "r"(rhs.n[7]),
+				"r"(rhs.n[8]), "r"(rhs.n[9]), "r"(rhs.n[10]), "r"(rhs.n[11]), "r"(rhs.n[12]), "r"(rhs.n[13]), "r"(rhs.n[14]), "r"(rhs.n[15]));
+}
 
 
 
