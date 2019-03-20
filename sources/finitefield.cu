@@ -23,7 +23,7 @@ DEVICE_FUNC uint256_g FIELD_ADD(const uint256_g& a, const uint256_g& b )
 
 DEVICE_FUNC uint256_g FIELD_SUB(const uint256_g& a, const uint256_g& b)
 {
-    if (CMP(a, b) > 0)
+    if (CMP(a, b) >= 0)
 		return SUB(a, b);
 	else
 	{

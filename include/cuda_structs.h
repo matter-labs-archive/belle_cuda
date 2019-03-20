@@ -38,7 +38,15 @@
 
 struct uint64_g
 {
-    uint32_t n[2];
+    union 
+    {
+        uint64_t as_long;
+        struct 
+        {
+            uint32_t low;
+            uint32_t high;
+        };      
+    };
 };
 
 struct uint128_g
