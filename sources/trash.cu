@@ -3057,6 +3057,81 @@ void ECC_add_proj_warp_based_driver(const ec_point* a_arr, const ec_point* b_arr
 }
 
 
+#define UNROLLED_CYCLE_ITER(idx) \
+"mov.b32 sp, b;\n\t" \
+"mov.b32 x, sp;\n\t" 
+
+// "mad.lo.cc.u32 v, a, x, v;\n\t" \
+// "madc.hi.cc.u32 u, a, x, u;\n\t" \
+// "addc.u32 t, 0, 0;\n\t" \
+// "mov.b32 sp, v;\n\t" \
+// "shfl.sync.down.b32 sp, sp, 1, 8;\n\t" \
+// "mov.b32 v, sp;\n\t" \
+// "mov.b32 sp, c;\n\t" \
+// "mov.b32 c, sp;\n\t" \
+// "and.type y, %laneid, 7;\n\t" \
+// "setp.eq.u32  p, y, 7;\n\t"\
+// "@p {\n\t" \
+// "mov.u32 c, v;\n\t" \
+// "mov.u32 v, 0;\n\t" \
+// "}\n\t" \
+// "add.cc.u32 v, u, v;\n\t" \
+// "addc.u32 u, t, 0;\n\t"
+
+//"shfl.sync.idx.b32 sp, sp, idx, 8;" \
+//"shfl.sync.up.b32 sp, sp, 1, 8;\n\t" \
+//"shfl.sync.up.b32  sp, sp, 1, 8;\n\t" \
+
+//The following implementation is based on paper "A Warp-synchronous Implementation for Multiple-length Multiplication on the GPU"
+
+DEVICE_FUNC uint64_g asm_mul_warp_based(uint32_t A, const uint32_t B)
+{
+    uint64_g res;
+    
+    asm(    "{\n\t"  
+            ".reg .u32 a, b, x, y, u, v, c, t;\n\t"
+            ".reg .b32 sp, sp1;\n\t"
+            ".reg .pred p;\n\t"
+
+            "mov.u32 a, %1;\n\t"
+            "mov.u32 b, %2;\n\t"
+
+            "mov.u32 u, 0;\n\t"
+            "mov.u32 v, 0;\n\t"
+            "mov.u32 c, 0;\n\t"
+
+            // UNROLLED_CYCLE_ITER(0)
+            // UNROLLED_CYCLE_ITER(1)
+            // UNROLLED_CYCLE_ITER(2)
+            // UNROLLED_CYCLE_ITER(3)
+            // UNROLLED_CYCLE_ITER(4)
+            // UNROLLED_CYCLE_ITER(5)
+            // UNROLLED_CYCLE_ITER(6)
+            // UNROLLED_CYCLE_ITER(7)
+
+            "L1:\n\t"
+            "setp.eq.u32 p, u, 0;\n\t"
+            "vote.sync.any.pred  p, p, 8;\n\t"
+            "@!p bra L2;\n\t"
+            "mov.b32 sp, u;\n\t"
+            "shfl.sync.up.b32  sp1, sp, 0x1,  0x0, 0xffffffff;\n\t"
+            //"shfl.sync.down.b32 sp1, sp, 1, 0xffffffff;\n\t"
+            // "mov.b32 u, sp;\n\t"
+            // "add.cc.u32 v, v, u;\n\t"
+            // "addc.u32 u, 0, 0;\n\t"
+            // "bra L1;\n\t"
+           
+            "L2:\n\t"
+
+            // "st.global.u32 [OUT + %laneid], c;\n\t"
+            // "st.global.u32 [OUT + %laneid + 8], v;\n\t"
+            "mov.b64 %0, {c, v};}\n\t"  
+            : "=l"(res.as_long) : "r"(A), "r"(B));
+    
+    return res;
+}
+
+
 
 
 

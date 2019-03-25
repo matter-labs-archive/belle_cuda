@@ -26,7 +26,7 @@ void func_name##_driver(A_type *a_arr, B_type *b_arr, C_type *c_arr, size_t arr_
   	cudaGetDeviceProperties(&prop, 0);\
 	uint32_t smCount = prop.multiProcessorCount;\
 	cudaError_t error = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, func_name##_kernel, blockSize, 0);\
-    if (error == cudaSuccess && realGridSize > maxActiveBlocks * smCount)\
+    if (error == cudaSuccess)\
     	realGridSize = maxActiveBlocks * smCount;\
 \
 	std::cout << "Grid size: " << realGridSize << ",  min grid size: " << minGridSize << ",  blockSize: " << blockSize << std::endl;\

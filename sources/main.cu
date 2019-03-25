@@ -319,6 +319,7 @@ void mul_uint256_to_512_asm_with_allocation_driver(uint256_g*, uint256_g*, uint5
 void mul_uint256_to_512_asm_longregs_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
 void mul_uint256_to_512_Karatsuba_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
 void mul_uint256_to_512_asm_with_shuffle_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
+void warp_based_mul_naive_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
 
 mul_func_vec_t mul_bench = {
     {"naive approach", mul_uint256_to_512_naive_driver},
@@ -326,7 +327,8 @@ mul_func_vec_t mul_bench = {
 	{"asm with register alloc", mul_uint256_to_512_asm_with_allocation_driver},
 	{"asm with longregs", mul_uint256_to_512_asm_longregs_driver},
     {"Karatsuba", mul_uint256_to_512_Karatsuba_driver},
-    {"asm with shuffles", mul_uint256_to_512_asm_with_shuffle_driver}
+    {"asm with shuffles", mul_uint256_to_512_asm_with_shuffle_driver},
+    {"warp-based approach", warp_based_mul_naive_driver}
 };
 
 void square_uint256_to_512_naive_driver(uint256_g*, uint256_g*, uint512_g*, size_t);
@@ -434,7 +436,7 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 
 
 size_t max_bench_len = 1000000;
-size_t bench_len = 512;
+size_t bench_len = max_bench_len;
 
 const char* OUTPUT_FILE = "benches.txt";
 
@@ -460,8 +462,8 @@ int main(int argc, char* argv[])
 	// std::cout << "substraction benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(substraction_bench, bench_len);
 
-	// std::cout << "multiplication benchmark: " << std::endl << std::endl;
-	// gpu_benchmark(mul_bench, bench_len);
+	std::cout << "multiplication benchmark: " << std::endl << std::endl;
+	gpu_benchmark(mul_bench, bench_len);
 
 	// std::cout << "square benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(square_bench, bench_len);
@@ -484,8 +486,8 @@ int main(int argc, char* argv[])
     // std::cout << "ECC affine exponentiation benchmark: " << std::endl << std::endl;
     // gpu_benchmark(affine_exp_curve_point_bench, bench_len);
 
-    std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE, true);
+    // std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
+    // gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE, true);
 
     return 0;
 }

@@ -165,106 +165,6 @@ void func_name##_driver_strided(uint256_g* a_arr, uint256_g* b_arr, uin256_g* c_
 
 //warp-based long multiplication and montgomery multiplication
 
-#define THREADS_PER_MUL 8
-
-#define UNROLLED_CYCLE_ITER(idx) \
-"shfl.sync.idx.b32 x, b, idx, 8;" \
-"mad.lo.cc.u32 v, a, x, v;\n\t" \
-"madc.hi.cc.u32 u, a, x, u;\n\t" \
-"addc.u32 t, 0, 0;\n\t" \
-"shfl.sync.up.b32  v, v, 1, 8;\n\t" \
-"shfl.sync.up.b32  c, c, 1, 8;\n\t" \
-"and.type y, %laneid, 7;\n\t" \
-"setp.eq.u32  p, y, 7;\n\t"\
-"@p {\n\t" \
-"mov.u32 c, v;\n\t" \
-"mov.u32 v, 0;\n\t" \
-"}\n\t" \
-"add.cc.u32 v, u, v;\n\t" \
-"addc.u32 u, t, 0;\n\t"
-
-//The following implementation is based on paper "A Warp-synchronous Implementation for Multiple-length Multiplication on the GPU"
-
-DEVICE_FUNC uint64_g asm_mul_warp_based(uint32_t A, const uint32_t B)
-{
-    uint64_g res;
-    
-    asm(    "{\n\t"  
-            ".reg .u32 a, b, x, y, u, v, c, t;\n\t"
-            ".reg .b32 shuffle_param"
-            ".reg .pred p;\n\t"
-
-            // "ld.global.u32 a, [A + %laneid];\n\t"
-            // "ld.global.u32 b, [B + %laneid];\n\t"
-            "mov.u32 a, %1;\n\t"
-            "mov.u32 b, %2;\n\t"
-
-            "mov.u32 u, 0;\n\t"
-            "mov.u32 v, 0;\n\t"
-            "mov.u32 c, 0;\n\t"
-
-            UNROLLED_CYCLE_ITER(0)
-            UNROLLED_CYCLE_ITER(1)
-            UNROLLED_CYCLE_ITER(2)
-            UNROLLED_CYCLE_ITER(3)
-            UNROLLED_CYCLE_ITER(4)
-            UNROLLED_CYCLE_ITER(5)
-            UNROLLED_CYCLE_ITER(6)
-            UNROLLED_CYCLE_ITER(7)
-
-            "L1:\n\t"
-            "setp.eq.u32   p, ne, 0;\n\t"
-            "vote.sync.any.pred  p, p, 8;\n\t"
-            "@!p bra L2;\n\t"
-            "shfl.sync.down.b32  u, u, 1, 8;\n\t"
-            "add.cc.u32 v, v, u;\n\t"
-            "addc.u32 u, 0, 0;\n\t"
-            "bra L1;\n\t"
-           
-            "L2:\n\t"
-
-            // "st.global.u32 [OUT + %laneid], c;\n\t"
-            // "st.global.u32 [OUT + %laneid + 8], v;\n\t"
-            "mov.b64 %0, {c, v};}\n\t"  
-            : "=l"(res.as_long) : "r"(A), "r"(B));
-    
-    return res;
-}
-
-//I bet there must be a faster solution!
-//TODO: have a look at https://ieeexplore.ieee.org/document/5669278
-
-__global__ void warp_based_mul_kernel(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
-{
-    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-    size_t idx = tid / THREADS_PER_MUL;
-    size_t lane = tid % THREADS_PER_MUL;
-	while (idx < arr_len)
-	{
-		uint32_t A = a_arr[idx].n[lane];
-        uint32_t B = b_arr[idx].n[lane];
-        uint64_g C = asm_mul_warp_based(A, B);
-
-        c_arr[idx].n[lane] = C.low;
-        c_arr[idx].n[lane + N] = C.high;
-
-		tid += (blockDim.x * gridDim.x) / THREADS_PER_MUL;
-	}
-}
-
-void warp_based_mul_driver(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
-{
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, 0);
-    uint32_t smCount = prop.multiProcessorCount;   
-    geometry2 geometry = find_geometry2(warp_based_mul_kernel, 0, smCount);
-
-    std::cout << "Grid size: " << geometry.gridSize << ",  blockSize: " << geometry.blockSize << std::endl;
-    warp_based_mul_kernel<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, arr_len);
-}
-
-//LARGE REDC Montgomety mul
-
 DEVICE_FUNC __inline__ void long_in_place_add(uint32_t& A, uint32_t B, uint32_t& carry)
 {
      asm(   "{\n\t"  
@@ -280,6 +180,88 @@ DEVICE_FUNC __inline__ void long_in_place_sub(uint32_t& A, uint32_t B, uint32_t&
             "addc.u32 %1, 0, 0;}\n\t" 
             : "+r"(A), "=r"(carry) : "r"(B));
 }
+
+#define THREADS_PER_MUL 8
+
+DEVICE_FUNC uint64_g warp_based_mul_naive(uint32_t A, const uint32_t B)
+{
+    uint32_t lane = threadIdx.x % THREADS_PER_MUL;
+    uint32_t u = 0, v = 0, c = 0;
+
+    for (uint32_t j = 0; j < THREADS_PER_MUL; j++)
+    {
+        uint32_t b = __shfl_sync(0xffffffff, B, j, THREADS_PER_MUL);
+        uint32_t t;
+
+        asm(    "mad.lo.cc.u32 %0, %3, %4, %0;\n\t" 
+                "madc.hi.cc.u32 %1, %3, %4, %1;\n\t"
+                "addc.u32 %2, 0, 0;\n\t"
+                : "+r"(v), "+r"(u), "=r"(t)
+                : "r"(A), "r"(b));
+
+        v = __shfl_sync(0xffffffff, v, (lane + 1) % THREADS_PER_MUL, THREADS_PER_MUL);
+        c = __shfl_sync(0xffffffff, c, (lane + 1) % THREADS_PER_MUL, THREADS_PER_MUL);
+
+        if (lane == THREADS_PER_MUL - 1)
+        {
+            c = v;
+            v = 0;
+        }
+
+        asm(   "{\n\t"  
+                "add.cc.u32 %1, %0, %1;\n\t"
+                "addc.u32 %0, %2, 0;}\n\t" 
+                : "+r"(u), "+r"(v) : "r"(t));
+    }
+
+    while (__any_sync(0xffffffff, u != 0))
+    {
+        u = __shfl_sync(0xffffffff, u, (lane + THREADS_PER_MUL - 1) % THREADS_PER_MUL, THREADS_PER_MUL);
+        long_in_place_add(v, u, u);
+    }
+
+    uint64_g res;
+    res.low = c;
+    res.high = v;
+    return res;
+}
+
+
+//I bet there must be a faster solution!
+//TODO: have a look at https://ieeexplore.ieee.org/document/5669278
+
+__global__ void warp_based_mul_naive_kernel(const uint256_g* a_arr, const uint256_g* b_arr, uint512_g* c_arr, size_t arr_len)
+{
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    size_t idx = tid / THREADS_PER_MUL;
+    size_t lane = tid % THREADS_PER_MUL;
+	while (idx < arr_len)
+	{
+		uint32_t A = a_arr[idx].n[lane];
+        uint32_t B = b_arr[idx].n[lane];
+        uint64_g C = warp_based_mul_naive(A, B);
+
+        c_arr[idx].n[lane] = C.low;
+        c_arr[idx].n[lane + N] = C.high;
+
+		idx += (blockDim.x * gridDim.x) / THREADS_PER_MUL;
+	}
+}
+
+void warp_based_mul_naive_driver(uint256_g* a_arr, uint256_g* b_arr, uint512_g* c_arr, size_t arr_len)
+{
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    uint32_t smCount = prop.multiProcessorCount;   
+    geometry2 geometry = find_geometry2(warp_based_mul_naive_kernel, 0, smCount);
+
+    std::cout << "Grid size: " << geometry.gridSize << ",  blockSize: " << geometry.blockSize << std::endl;
+    warp_based_mul_naive_kernel<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, arr_len);
+}
+
+#define WARP_MUL(a, b) warp_based_mul_naive(a, b)
+
+//LARGE REDC Montgomety mul
 
 #define MAX_UINT32_VAL 0xffffffff
 
@@ -332,9 +314,9 @@ DEVICE_FUNC uint32_t mont_mul_warp_based(uint32_t A, uint32_t B, uint32_t warp_i
     
     uint32_t mask = (THREADS_PER_MUL - 1) << (warp_idx * THREADS_PER_MUL);
 
-    uint64_g temp1 = asm_mul_warp_based(A, B);
-    uint64_g temp2 = asm_mul_warp_based(temp1.low, BASE_FIELD_N_LARGE.n[lane]);
-    temp2 = asm_mul_warp_based(temp2.low, BASE_FIELD_P.n[lane]);
+    uint64_g temp1 = WARP_MUL(A, B);
+    uint64_g temp2 = WARP_MUL(temp1.low, BASE_FIELD_N_LARGE.n[lane]);
+    temp2 = WARP_MUL(temp2.low, BASE_FIELD_P.n[lane]);
 
     //adding higher 8-words part
     uint32_t carry = 0;
