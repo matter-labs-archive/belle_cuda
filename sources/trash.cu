@@ -3133,7 +3133,68 @@ DEVICE_FUNC uint64_g asm_mul_warp_based(uint32_t A, const uint32_t B)
 
 
 
+__device__ void d_mul_concurrent(P_BASE __restrict A , P_BASE __restrict B , P_BASE __restrict R , BASE n,
+    unsigned int r , unsigned int d)
+{
+    // Shared conditional
+    __shared__ int cond[33];
 
+    // Result will be stored here
+    unsigned long long u = 0;
+    // Cache locally
+    unsigned long long a = A[IDX];
+    BASE b = B[IDX];
+    int index = IDX / r;
+    int base = index * r;
+    int up = mod(IDX + 1,r) + base;
+
+    // Perform operations
+    for( unsigned int i = 0 ; i < r ; i++ )
+    {
+        TMP[IDX] = b;
+        // Do the computation
+        u = TMP[base + i] * a + u;
+        // save the carry
+        TMP[IDX] = u; 
+
+        unsigned long long overflow = hi( u );
+        u = (BASE)u + ( TMP[base] * d) * (unsigned long long)n;
+        TMP[IDX] = u;
+        overflow += hi(u);
+        u = overflow + TMP[up] * ( mod(IDX , r) != (r - 1) );
+    }
+
+    index++;
+    base = mod(IDX , r) > 0;
+
+    // Propagate all carries (Rarely happens)
+    do
+    {
+cond[index] = false;
+TMP[up] = hi( u );
+u = (BASE)u + TMP[IDX] * base;
+if( hi(u) ) cond[index] = true;
+// Stall
+}while( cond[index] );
+for( int i = r - 1 ; i >= 0 ; i-- ){
+cond[index * (base == i)] = (u - n);
+if( cond[index] < 0 ) {
+break;
+}
+if( cond[index] ) {
+u = u + (BASE)(~n) + 1 - base;
+do{
+cond[index] = false;
+TMP[up] = hi( u );
+u = (BASE)u + TMP[IDX] * base;
+if( hi(u) ) cond[index] = true;
+} while( cond[index] );
+break;
+}
+}
+// Copy result to global memory
+R[IDX] = u;
+}
 
 
 

@@ -343,12 +343,14 @@ void mont_mul_256_naive_SOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 void mont_mul_256_asm_SOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 void mont_mul_256_naive_CIOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 void mont_mul_256_asm_CIOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
+void warp_based_mont_mul_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 
 general_func_vec_t mont_mul_bench = {
     {"naive SOS", mont_mul_256_naive_SOS_driver},
 	{"asm SOS", mont_mul_256_asm_SOS_driver},
 	{"naive CIOS", mont_mul_256_naive_CIOS_driver},
-	{"asm CIOS", mont_mul_256_asm_CIOS_driver}
+	{"asm CIOS", mont_mul_256_asm_CIOS_driver},
+    {"warp-based approach", warp_based_mont_mul_driver}
 };
 
 
@@ -435,7 +437,7 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-size_t max_bench_len = 1000000;
+size_t max_bench_len = 20000000;
 size_t bench_len = max_bench_len;
 
 const char* OUTPUT_FILE = "benches.txt";
@@ -471,8 +473,8 @@ int main(int argc, char* argv[])
     // std::cout << "field inversion benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(mul_inv_bench, bench_len);
 
-	// std::cout << "montgomery multiplication benchmark: " << std::endl << std::endl;
-	// gpu_benchmark(mont_mul_bench, bench_len);
+	std::cout << "montgomery multiplication benchmark: " << std::endl << std::endl;
+	gpu_benchmark(mont_mul_bench, bench_len);
 
     // std::cout << "ECC add-sub benchmark: " << std::endl << std::endl;
     // gpu_benchmark(add_sub_curve_points_bench, bench_len);

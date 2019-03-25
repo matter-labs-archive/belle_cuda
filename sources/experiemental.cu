@@ -280,13 +280,13 @@ DEVICE_FUNC __inline__ bool warp_based_geq(uint32_t A, uint32_t B, uint32_t mask
 DEVICE_FUNC __inline__ uint32_t warp_based_add(uint32_t A, uint32_t B, uint32_t mask)
 {
     uint32_t carry;
-    long_in_place_sub(A, B, carry);
+    long_in_place_add(A, B, carry);
 
     //propagate carry
     while (__any_sync(mask, carry != 0))
     {
-        carry = __shfl_up_sync (mask, carry, 1, THREADS_PER_MUL);
-        long_in_place_add(A, carry, carry);
+        uint32_t x = __shfl_up_sync(mask, carry, 1, THREADS_PER_MUL);
+        long_in_place_add(A, x, carry);
     }
     return A;
 }
@@ -299,8 +299,8 @@ DEVICE_FUNC __inline__ uint32_t warp_based_sub(uint32_t A, uint32_t B, uint32_t 
     //propagate borrow
     while (__any_sync(mask, carry != 0))
     {
-        carry = __shfl_up_sync (mask, carry, 1, THREADS_PER_MUL);
-        long_in_place_sub(A, carry, carry);
+        uint32_t x = __shfl_up_sync(mask, carry, 1, THREADS_PER_MUL);
+        long_in_place_sub(A, x, carry);
     }
     return A;
 }
@@ -343,6 +343,62 @@ DEVICE_FUNC uint32_t mont_mul_warp_based(uint32_t A, uint32_t B, uint32_t warp_i
     return temp1.high;
 }
 
+DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t warp_idx, uint32_t lane)
+{
+    uint32_t S[3] = {0, 0, 0};
+    uint32_t P = BASE_FIELD_P.n[lane];
+
+    for (uint32_t j = 0; j < N; j++)
+    {
+        uint32_t b = __shfl_sync(0xffffffff, B, j, THREADS_PER_MUL);
+
+        asm(    "mad.lo.cc.u32 %0, %3, %4, %0;\n\t" 
+                "madc.hi.cc.u32 %1, %3, %4, %1;\n\t"
+                "addc.u32 %2, %2, 0;\n\t"
+                : "+r"(S[0]), "+r"(S[1]), "=r"(S[2])
+                : "r"(A), "r"(b));
+
+        uint32_t q;
+        if (lane == 0)
+            q = S[0] * BASE_FIELD_N;
+        q = __shfl_sync(0xffffffff, q, 0, THREADS_PER_MUL);
+        
+        asm(    "mad.lo.cc.u32 %0, %3, %4, %0;\n\t" 
+                "madc.hi.cc.u32 %1, %3, %4, %1;\n\t"
+                "addc.u32 %2, %2, 0;\n\t"
+                : "+r"(S[0]), "+r"(S[1]), "=r"(S[2])
+                : "r"(q), "r"(P));
+
+        uint32_t temp = 0;
+        temp = __shfl_down_sync(0xffffffff, temp, 1, THREADS_PER_MUL);
+
+         asm(   "{\n\t"  
+                "add.cc.u32 %0, %1, %3;\n\t"
+                "addc.u32   %1, %2, 0;}\n\t" 
+                : "=r"(S[0]), "+r"(S[1]) : "r"(S[2]), "r"(temp));
+
+        S[2] = 0;
+    }
+
+    if (lane == THREADS_PER_MUL - 1)
+        S[1] = 0;
+
+    //propagate carry (carry is located in S1)
+    while (__any_sync(0xffffffff, S[1] != 0))
+    {
+        uint32_t x = __shfl_up_sync(0xffffffff, S[1], 1, THREADS_PER_MUL);
+        long_in_place_add(S[0], x, S[1]);
+        if (lane == THREADS_PER_MUL - 1)
+            S[1] = 0;
+    }
+
+    //final comparison
+    // if (warp_based_geq(S[0], P, 0xffffffff, warp_idx))
+    //     warp_based_sub(S[0], P, 0xffffffff);
+
+    return S[0];
+}
+
 __global__ void warp_based_mont_mul_kernel(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
 {
     size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -354,14 +410,14 @@ __global__ void warp_based_mont_mul_kernel(const uint256_g* a_arr, const uint256
 	{
 		uint32_t A = a_arr[idx].n[lane];
         uint32_t B = b_arr[idx].n[lane];
-        uint32_t C = mont_mul_warp_based(A, B, warp_idx, lane);
+        uint32_t C = mont_mul_warp_based_ver2(A, B, warp_idx, lane);
 
         c_arr[idx].n[lane] = C;
-		tid += (blockDim.x * gridDim.x) / THREADS_PER_MUL;
+		idx += (blockDim.x * gridDim.x) / THREADS_PER_MUL;
 	}
 }
 
-void warp_based_mont_mul_driver(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
+void warp_based_mont_mul_driver(uint256_g* a_arr, uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
 {
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0);
