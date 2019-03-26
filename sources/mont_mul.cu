@@ -454,11 +454,11 @@ DEVICE_FUNC uint256_g mont_mul_256_asm_CIOS(const uint256_g& u, const uint256_g&
             : "l"(u.nn[0]), "l"(u.nn[1]), "l"(u.nn[2]), "l"(u.nn[3]),
                 "l"(v.nn[0]), "l"(v.nn[1]), "l"(v.nn[2]), "l"(v.nn[3]));
                                    
-    if (CMP(w, BASE_FIELD_P) >= 0)
-    {
-        //TODO: may be better change to inary version of sub?
-        w = SUB(w, BASE_FIELD_P);
-    }
+    // if (CMP(w, BASE_FIELD_P) >= 0)
+    // {
+    //     //TODO: may be better change to inary version of sub?
+    //     w = SUB(w, BASE_FIELD_P);
+    // }
 	
     return w;
 }

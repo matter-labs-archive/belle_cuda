@@ -16,6 +16,8 @@ set_target_properties(cuda_benches PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 #Checking all of the routines for correctness
 option(WITH_CORRECTNESS_CHECK "check correctness of all routines" OFF)
 
+set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -O3")
+
 if (WITH_CORRECTNESS_CHECK)
     # dependencies
     # add_subdirectory(lib/Catch2)

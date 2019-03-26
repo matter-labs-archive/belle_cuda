@@ -348,14 +348,14 @@ DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t w
     uint32_t S[3] = {0, 0, 0};
     uint32_t P = BASE_FIELD_P.n[lane];
 
-    for (uint32_t j = 0; j < N; j++)
+    for (uint32_t j = 0; j < 8; j++)
     {
         uint32_t b = __shfl_sync(0xffffffff, B, j, THREADS_PER_MUL);
 
         asm(    "mad.lo.cc.u32 %0, %3, %4, %0;\n\t" 
                 "madc.hi.cc.u32 %1, %3, %4, %1;\n\t"
                 "addc.u32 %2, %2, 0;\n\t"
-                : "+r"(S[0]), "+r"(S[1]), "=r"(S[2])
+                : "+r"(S[0]), "+r"(S[1]), "+r"(S[2])
                 : "r"(A), "r"(b));
 
         uint32_t q;
@@ -366,13 +366,14 @@ DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t w
         asm(    "mad.lo.cc.u32 %0, %3, %4, %0;\n\t" 
                 "madc.hi.cc.u32 %1, %3, %4, %1;\n\t"
                 "addc.u32 %2, %2, 0;\n\t"
-                : "+r"(S[0]), "+r"(S[1]), "=r"(S[2])
+                : "+r"(S[0]), "+r"(S[1]), "+r"(S[2])
                 : "r"(q), "r"(P));
 
-        uint32_t temp = 0;
-        temp = __shfl_down_sync(0xffffffff, temp, 1, THREADS_PER_MUL);
+        uint32_t temp = __shfl_down_sync(0xffffffff, S[0], 1, THREADS_PER_MUL);
+        if (lane == THREADS_PER_MUL - 1)
+            temp = 0;
 
-         asm(   "{\n\t"  
+        asm(   "{\n\t"  
                 "add.cc.u32 %0, %1, %3;\n\t"
                 "addc.u32   %1, %2, 0;}\n\t" 
                 : "=r"(S[0]), "+r"(S[1]) : "r"(S[2]), "r"(temp));
@@ -380,21 +381,16 @@ DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t w
         S[2] = 0;
     }
 
-    if (lane == THREADS_PER_MUL - 1)
-        S[1] = 0;
+    //printf("%d: %x, %x\n", lane, S[1], S[0]);
 
     //propagate carry (carry is located in S1)
     while (__any_sync(0xffffffff, S[1] != 0))
     {
-        uint32_t x = __shfl_up_sync(0xffffffff, S[1], 1, THREADS_PER_MUL);
+        uint32_t x = __shfl_sync(0xffffffff, S[1], (lane + THREADS_PER_MUL - 1) % THREADS_PER_MUL, THREADS_PER_MUL);
         long_in_place_add(S[0], x, S[1]);
-        if (lane == THREADS_PER_MUL - 1)
-            S[1] = 0;
     }
 
-    //final comparison
-    // if (warp_based_geq(S[0], P, 0xffffffff, warp_idx))
-    //     warp_based_sub(S[0], P, 0xffffffff);
+    //TODO: why there is no need for final comparison?
 
     return S[0];
 }
