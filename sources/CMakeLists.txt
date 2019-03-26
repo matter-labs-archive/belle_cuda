@@ -18,6 +18,13 @@ option(WITH_CORRECTNESS_CHECK "check correctness of all routines" OFF)
 
 set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -O3")
 
+add_library(CudaPTX OBJECT shuffle_ptx.cu)
+set_property(TARGET CudaPTX PROPERTY CUDA_PTX_COMPILATION ON)
+
+install(TARGETS CudaPTX
+   OBJECTS DESTINATION bin/ptx 
+)
+
 if (WITH_CORRECTNESS_CHECK)
     # dependencies
     # add_subdirectory(lib/Catch2)

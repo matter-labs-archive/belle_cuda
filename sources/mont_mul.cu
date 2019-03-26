@@ -101,11 +101,11 @@ DEVICE_FUNC uint256_g mont_mul_256_naive_CIOS(const uint256_g& u, const uint256_
         prefix_low = prefix_high;
     }
     
-    if (CMP(T, BASE_FIELD_P) >= 0)
-    {
-        //TODO: may be better change to inary version of sub?
-        T = SUB(T, BASE_FIELD_P);
-    }
+    // if (CMP(T, BASE_FIELD_P) >= 0)
+    // {
+    //     //TODO: may be better change to inary version of sub?
+    //     T = SUB(T, BASE_FIELD_P);
+    // }
 
     return T;
 }

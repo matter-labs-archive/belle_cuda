@@ -395,6 +395,77 @@ DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t w
     return S[0];
 }
 
+#define LOOP_UNROLLER(idx) \
+"shfl.sync.idx.b32  b, B, "#idx", 0x181f, 0xffffffff;\n\t" \
+"mad.lo.cc.u32 S0, A, b, S0;\n\t" \
+"madc.hi.cc.u32 S1, A, b, S1;\n\t" \
+"addc.u32 S2, S2, 0;\n\t" \
+\
+"mul.lo.u32 q, S0, N;\n\t" \
+"shfl.sync.idx.b32  q, q, 0, 0x181f, 0xffffffff;\n\t" \
+\
+"mad.lo.cc.u32 S0, P, q, S0;\n\t" \
+"madc.hi.cc.u32 S1, P, q, S1;\n\t" \
+"addc.u32 S2, S2, 0;\n\t" \
+\
+"shfl.sync.down.b32  temp|cond, S0, 1, 0x181f, 0xffffffff;\n\t" \
+"@!cond mov.u32 temp, 0;\n\t" \
+\
+"add.cc.u32 S0, S1, temp;\n\t" \
+"addc.u32 S1, S2, 0;\n\t" \
+"mov.u32 S2, 0;\n\t"
+
+
+DEVICE_FUNC uint32_t mont_mul_warp_based_asm(uint32_t A, uint32_t B, uint32_t warp_idx, uint32_t lane)
+{
+    uint32_t result;
+    
+    asm(    "{\n\t"
+            ".reg .u32 A, B, b, S<3>;\n\t"
+            ".reg .u32 q, P, N, temp;\n\t"
+            ".reg .pred cond;\n\t"
+            ".reg .b64 base_addr, addr;\n\t"
+
+            "mov.u32 A, %1;\n\t"
+            "mov.u32 B, %2;\n\t"
+
+            "ld.const.u32 N, [BASE_FIELD_N];\n\t"
+            "mov.u64 base_addr, BASE_FIELD_P;\n\t"
+            "mul.wide.u32 addr, %3, 4;\n\t"            	
+	        "add.s64 addr, base_addr, addr;\n\t"
+	        "ld.const.u32 P, [addr];\n\t"
+
+            "mov.u32 S0, 0;\n\t"
+            "mov.u32 S1, 0;\n\t"
+            "mov.u32 S2, 0;\n\t"
+            
+            LOOP_UNROLLER(0)
+            LOOP_UNROLLER(1)
+            LOOP_UNROLLER(2)
+            LOOP_UNROLLER(3)
+            LOOP_UNROLLER(4)
+            LOOP_UNROLLER(5)
+            LOOP_UNROLLER(6)
+            LOOP_UNROLLER(7)
+
+            "L1:\n\t"
+            "setp.ne.u32 cond, S1, 0;\n\t"
+            "vote.sync.any.pred cond, cond, 0xffffffff;\n\t"
+            "@!cond bra L2;\n\t"
+            "shfl.sync.up.b32  temp|cond, S1, 0x1, 0x181f, 0xffffffff;\n\t"
+            "@!cond mov.u32 temp, 0;\n\t" \
+            "add.cc.u32 S0, S0, temp;\n\t"
+            "addc.u32 S1, 0, 0;\n\t" 
+            "mov.u32 temp, 0;\n\t"
+            "bra L1;\n\t"
+
+            "L2:\n\t"
+            "mov.u32 %0, 0;}\n\t"
+            : "=r"(result) : "r"(A), "r"(B), "r"(lane));
+
+    return result;
+}
+
 __global__ void warp_based_mont_mul_kernel(const uint256_g* a_arr, const uint256_g* b_arr, uint256_g* c_arr, size_t arr_len)
 {
     size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -406,7 +477,7 @@ __global__ void warp_based_mont_mul_kernel(const uint256_g* a_arr, const uint256
 	{
 		uint32_t A = a_arr[idx].n[lane];
         uint32_t B = b_arr[idx].n[lane];
-        uint32_t C = mont_mul_warp_based_ver2(A, B, warp_idx, lane);
+        uint32_t C = mont_mul_warp_based_asm(A, B, warp_idx, lane);
 
         c_arr[idx].n[lane] = C;
 		idx += (blockDim.x * gridDim.x) / THREADS_PER_MUL;

@@ -16,6 +16,5 @@ else()
     message( FATAL_ERROR ${GPU_ARCH})
 endif()
 
-
 include_directories(include)
 add_subdirectory(sources)
