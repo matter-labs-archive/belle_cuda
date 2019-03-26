@@ -343,14 +343,18 @@ void mont_mul_256_naive_SOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 void mont_mul_256_asm_SOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 void mont_mul_256_naive_CIOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 void mont_mul_256_asm_CIOS_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
-void warp_based_mont_mul_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
+void mont_mul_warp_based_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
+void mont_mul_warp_based_ver2_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
+void mont_mul_warp_based_asm_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 
 general_func_vec_t mont_mul_bench = {
     {"naive SOS", mont_mul_256_naive_SOS_driver},
 	{"asm SOS", mont_mul_256_asm_SOS_driver},
 	{"naive CIOS", mont_mul_256_naive_CIOS_driver},
 	{"asm CIOS", mont_mul_256_asm_CIOS_driver},
-    {"warp-based approach", warp_based_mont_mul_driver}
+    //{"warp-based approach using COS", mont_mul_warp_based_driver},
+    {"warp-based approach using CIOS", mont_mul_warp_based_ver2_driver},
+    {"warp-based approach using CIOS (asm)", mont_mul_warp_based_asm_driver}
 };
 
 
@@ -464,8 +468,8 @@ int main(int argc, char* argv[])
 	// std::cout << "substraction benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(substraction_bench, bench_len);
 
-	std::cout << "multiplication benchmark: " << std::endl << std::endl;
-	gpu_benchmark(mul_bench, bench_len);
+	// std::cout << "multiplication benchmark: " << std::endl << std::endl;
+	// gpu_benchmark(mul_bench, bench_len);
 
 	// std::cout << "square benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(square_bench, bench_len);
