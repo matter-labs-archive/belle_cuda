@@ -167,7 +167,7 @@ void func_name##_driver_strided(uint256_g* a_arr, uint256_g* b_arr, uin256_g* c_
 
 DEVICE_FUNC __inline__ void long_in_place_add(uint32_t& A, uint32_t B, uint32_t& carry)
 {
-     asm(   "{\n\t"  
+    asm(    "{\n\t"  
             "add.cc.u32 %0, %0, %2;\n\t"
             "addc.u32 %1, 0, 0;}\n\t" 
             : "+r"(A), "=r"(carry) : "r"(B));
@@ -175,9 +175,10 @@ DEVICE_FUNC __inline__ void long_in_place_add(uint32_t& A, uint32_t B, uint32_t&
 
 DEVICE_FUNC __inline__ void long_in_place_sub(uint32_t& A, uint32_t B, uint32_t& carry)
 {
-     asm(   "{\n\t"  
+    asm(    "{\n\t"  
             "sub.cc.u32 %0, %0, %2;\n\t"
-            "addc.u32 %1, 0, 0;}\n\t" 
+            "addc.u32 %1, 0, 0;\n\t"
+            "xor.b32 %1, %1, 0x1;}\n\t" 
             : "+r"(A), "=r"(carry) : "r"(B));
 }
 
@@ -262,11 +263,11 @@ void warp_based_mul_naive_driver(uint256_g* a_arr, uint256_g* b_arr, uint512_g* 
 #define WARP_MUL(a, b) warp_based_mul_naive(a, b)
 
 
-DEVICE_FUNC __inline__ bool warp_based_geq(uint32_t A, uint32_t B, uint32_t mask)
+DEVICE_FUNC __inline__ bool warp_based_geq(uint32_t A, uint32_t B, uint32_t mask, uint32_t warp_mask)
 {
     uint32_t cond1 = __ballot_sync(mask, A > B);
     uint32_t cond2 = __ballot_sync(mask, A < B);
-    return (__ffs(__brev(cond1)) >= __ffs(__brev(cond2)));
+    return (__clz(cond1 & warp_mask) <= __clz(cond2 & warp_mask));
 }
 
 //we assume that addition is without overflow
@@ -289,26 +290,25 @@ DEVICE_FUNC __inline__ uint32_t warp_based_sub(uint32_t A, uint32_t B, uint32_t 
 {
     uint32_t carry;
     long_in_place_sub(A, B, carry);
-
+   
     //propagate borrow
     while (__any_sync(mask, carry != 0))
     {
-        uint32_t x = __shfl_sync(mask, carry, (lane +1) % THREADS_PER_MUL, THREADS_PER_MUL);
+        uint32_t x = __shfl_sync(mask, carry, (lane + THREADS_PER_MUL - 1) % THREADS_PER_MUL, THREADS_PER_MUL);
+       
         long_in_place_sub(A, x, carry);
     }
     return A;
 }
 
-DEVICE_FUNC uint32_t mont_mul_warp_based(uint32_t A, uint32_t B, uint32_t warp_idx, uint32_t lane)
+DEVICE_FUNC uint32_t mont_mul_warp_based(uint32_t A, uint32_t B, uint32_t warp_mask, uint32_t lane)
 {
     //LARGE REDC Montgomety mul
     // T = A * B
     //m = ((T mod R) * N) mod R
     //t = (T + m * p) / R
     //if t >= N then t = t - N
-    
-    uint32_t mask = (THREADS_PER_MUL - 1) << (warp_idx * THREADS_PER_MUL);
-
+   
     uint64_g temp1 = WARP_MUL(A, B);
     uint64_g temp2 = WARP_MUL(temp1.low, BASE_FIELD_N_LARGE.n[lane]);
     temp2 = WARP_MUL(temp2.low, BASE_FIELD_P.n[lane]);
@@ -318,27 +318,31 @@ DEVICE_FUNC uint32_t mont_mul_warp_based(uint32_t A, uint32_t B, uint32_t warp_i
     long_in_place_add(temp1.high, temp2.high, carry);
 
     //we are going to check if there is overflow from lower 8-words part
-    // uint32_t sum = temp1.low + temp2.low;
-    // uint32_t cond1_mask = __ballot_sync(mask, sum < temp1.low);
-    // uint32_t cond2_mask = __ballot_sync(mask, sum == MAX_UINT32_VAL);
-    // if (lane == THREADS_PER_MUL - 1)
-    //     carry = (uint32_t)CHECK_CONDITIONS(cond1_mask, cond2_mask, warp_idx);
+    uint32_t sum = temp1.low + temp2.low;
+    uint32_t cond1_mask = __ballot_sync(0xffffffff, sum < temp1.low) & warp_mask;
+    uint32_t cond2_mask = __ballot_sync(0xffffffff, sum == 0xffffffff) & warp_mask;
+
+    if (lane == THREADS_PER_MUL - 1)
+    {
+        //TODO: here should be a vey intimate check that I'm unable to perform
+        carry = 0;
+    }
 
     //propagate carry
-    while (__any_sync(mask, carry != 0))
+    while (__any_sync(0xffffffff, carry != 0))
     {
-        carry = __shfl_up_sync(mask, carry, 1, THREADS_PER_MUL);
-        long_in_place_add(temp1.high, carry, carry);
+        uint32_t x = __shfl_sync(0xffffffff, carry, (lane + THREADS_PER_MUL - 1) % THREADS_PER_MUL, THREADS_PER_MUL);
+        long_in_place_add(temp1.high, x, carry);
     }
 
     //now temp1.high holds t, compare t with N:
-    // if (warp_based_geq(temp1.high, BASE_FIELD_P.n[lane], mask, warp_idx))
-    //     warp_based_sub(temp1.high, BASE_FIELD_P.n[lane], mask);
+    if (warp_based_geq(temp1.high, BASE_FIELD_P.n[lane], 0xffffffff, warp_mask))
+        warp_based_sub(temp1.high, BASE_FIELD_P.n[lane], 0xffffffff, lane);
 
     return temp1.high;
 }
 
-DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t warp_idx, uint32_t lane)
+DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t warp_mask, uint32_t lane)
 {
     uint32_t S[3] = {0, 0, 0};
     uint32_t P = BASE_FIELD_P.n[lane];
@@ -385,10 +389,11 @@ DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t w
 
     //NB: we can chain several montgomety muls without the below reduction
     //It also results in no warp divergence!
-    //TODO: implement final reduction (there is something very subtle going on!)
-
-    // if (warp_based_geq(S[0], P, 0xffffffff))
-    //     warp_based_sub(S[0], P, 0xffffffff, lane);
+   
+    if (warp_based_geq(S[0], P, 0xffffffff, warp_mask))
+    {
+        warp_based_sub(S[0], P, 0xffffffff, lane);
+    }
 
     return S[0];
 }
@@ -414,7 +419,7 @@ DEVICE_FUNC uint32_t mont_mul_warp_based_ver2(uint32_t A, uint32_t B, uint32_t w
 "mov.u32 S2, 0;\n\t"
 
 
-DEVICE_FUNC uint32_t mont_mul_warp_based_asm(uint32_t A, uint32_t B, uint32_t warp_idx, uint32_t lane)
+DEVICE_FUNC uint32_t mont_mul_warp_based_asm(uint32_t A, uint32_t B, uint32_t warp_mask, uint32_t lane)
 {
     uint32_t result;
     
@@ -460,6 +465,13 @@ DEVICE_FUNC uint32_t mont_mul_warp_based_asm(uint32_t A, uint32_t B, uint32_t wa
             "mov.u32 %0, S0;}\n\t"
             : "=r"(result) : "r"(A), "r"(B), "r"(lane));
 
+    //final comparison
+    //todo: rewrite it in ASM PTX!
+    if (warp_based_geq(result, BASE_FIELD_P.n[lane], 0xffffffff, warp_mask))
+    {
+        warp_based_sub(result, BASE_FIELD_P.n[lane], 0xffffffff, lane);
+    }
+
     return result;
 }
 
@@ -469,13 +481,14 @@ __global__ void func_name##_kernel(const uint256_g* a_arr, const uint256_g* b_ar
     size_t tid = threadIdx.x + blockIdx.x * blockDim.x; \
     size_t idx = tid / THREADS_PER_MUL; \
     uint32_t lane = tid % THREADS_PER_MUL; \
-    uint32_t warp_idx = (tid % WARP_SIZE) / THREADS_PER_MUL; \
+    uint32_t shift = (tid % WARP_SIZE ) / THREADS_PER_MUL; \
+    uint32_t warp_mask = 0xff << (shift * THREADS_PER_MUL); \
 \
 	while (idx < arr_len) \
 	{ \
 		uint32_t A = a_arr[idx].n[lane]; \
         uint32_t B = b_arr[idx].n[lane]; \
-        uint32_t C = func_name(A, B, warp_idx, lane); \
+        uint32_t C = func_name(A, B, warp_mask, lane); \
 \
         c_arr[idx].n[lane] = C; \
 		idx += (blockDim.x * gridDim.x) / THREADS_PER_MUL; \
@@ -548,4 +561,10 @@ void func_name##_driver_per_warp(const ec_point* a_arr, const uint256_g* b_arr, 
     std::cout << "Grid size: " << geometry.gridSize << ",  blockSize: " << geometry.blockSize << std::endl;\
     func_name##_kernel_per_warp<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, count);\
 }
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+
 

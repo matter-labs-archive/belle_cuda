@@ -352,7 +352,7 @@ general_func_vec_t mont_mul_bench = {
 	{"asm SOS", mont_mul_256_asm_SOS_driver},
 	{"naive CIOS", mont_mul_256_naive_CIOS_driver},
 	{"asm CIOS", mont_mul_256_asm_CIOS_driver},
-    //{"warp-based approach using COS", mont_mul_warp_based_driver},
+    {"warp-based approach using COS", mont_mul_warp_based_driver},
     {"warp-based approach using CIOS", mont_mul_warp_based_ver2_driver},
     {"warp-based approach using CIOS (asm)", mont_mul_warp_based_asm_driver}
 };
