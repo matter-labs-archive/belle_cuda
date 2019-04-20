@@ -158,16 +158,10 @@ DEVICE_FUNC embedded_field operator*(const embedded_field& left, const embedded_
 	return result;
 }
 
-	
-__global__ void FFT_shuffle(embedded_field* __restrict__ input_arr, embedded_field* __restrict__ output_arr, uint32_t arr_len)
-{
-	uint32_t  tid = threadIdx.x + blockIdx.x * blockDim.x;
-	while (tid < arr_len)
-	{
-		output_arr[tid] = input_arr[__brev(tid)];
-		tid += blockDim.x * gridDim.x;
-	}
-}
+//commom FFT routines
+//------------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 struct field_pair
 {
@@ -175,23 +169,57 @@ struct field_pair
 	embedded_field b;
 };
 
-//array of precomputed roots of unity
-
-DEVICE_FUNC field_pair fft_buttefly(const embedded_field& x, const embedded_field& y, const embedded_field& root_of_unity)
+DEVICE_FUNC field_pair __inline__ fft_buttefly(const embedded_field& x, const embedded_field& y, const embedded_field& root_of_unity)
 {
 	embedded_field temp = y * root_of_unity;
 	return field_pair{ x + temp, x - temp};
 }
 
-DEVICE_FUNC embedded_field get_root_of_unity(uint32_t index)
+DEVICE_FUNC embedded_field __inline__ get_root_of_unity(uint32_t index, uint32_t omega_idx_coeff = 1)
 {
 	embedded_field result(EMBEDDED_FIELD_R);
+	uint32_t real_idx = index * omega_idx_coeff;
 	for (unsigned k = 0; k < ROOTS_OF_UNTY_ARR_LEN; k++)
 	{
-		if (CHECK_BIT(index, k))
+		if (CHECK_BIT(real_idx, k))
 			result *= embedded_field(EMBEDDED_FIELD_ROOTS_OF_UNITY[k]);
 	}
 	return result;	
+}
+
+struct geometry
+{
+    int gridSize;
+    int blockSize;
+};
+
+template<typename T>
+geometry find_suitable_geometry(T func, uint shared_memory_used, uint32_t smCount)
+{
+    int gridSize;
+    int blockSize;
+    int maxActiveBlocks;
+
+    cudaOccupancyMaxPotentialBlockSize(&gridSize, &blockSize, func, shared_memory_used, 0);
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, func, blockSize, shared_memory_used);
+    gridSize = maxActiveBlocks * smCount;
+
+    return geometry{gridSize, blockSize};
+}
+
+//Naive FFT-realization
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+__global__ void __inline__ FFT_shuffle(embedded_field* __restrict__ input_arr, embedded_field* __restrict__ output_arr, uint32_t arr_len)
+{
+	uint32_t  tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+	{
+		output_arr[tid] = input_arr[__brev(tid)];
+		tid += blockDim.x * gridDim.x;
+	}
 }
 
 __global__ void FFT_iteration(embedded_field* __restrict__ input_arr, embedded_field* __restrict__ output_arr, 
@@ -215,26 +243,6 @@ __global__ void FFT_iteration(embedded_field* __restrict__ input_arr, embedded_f
 
 		i += blockDim.x * gridDim.x;
 	}
-}
-
-struct geometry
-{
-    int gridSize;
-    int blockSize;
-};
-
-template<typename T>
-geometry find_suitable_geometry(T func, uint shared_memory_used, uint32_t smCount)
-{
-    int gridSize;
-    int blockSize;
-    int maxActiveBlocks;
-
-    cudaOccupancyMaxPotentialBlockSize(&gridSize, &blockSize, func, shared_memory_used, 0);
-    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, func, blockSize, shared_memory_used);
-    gridSize = maxActiveBlocks * smCount;
-
-    return geometry{gridSize, blockSize};
 }
 
 void fft_driver(embedded_field* __restrict__ input_arr, embedded_field* __restrict__ output_arr, uint32_t arr_len)
@@ -279,5 +287,156 @@ void fft_driver(embedded_field* __restrict__ input_arr, embedded_field* __restri
 
 	//clean_up
 	cudaFree(additional_device_memory);
+}
+
+
+//Bellman FFT-realization
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------------------------------------------------------------
+
+DEVICE_FUNC void _basic_serial_radix2_FFT(const embedded_field* input_arr, embedded_field* output_arr, size_t log_arr_len, size_t omega_idx_coeff)
+{
+	__shared__ embedded_field temp_arr[];
+
+	size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+	for(size_t i = tid; i < arr_len; i+= blockDim.x * gridDim.x;)
+	{
+		temp_arr[i] = input_arr[__brev(i)];
+	}
+
+	__syncthreads();
+	
+    for (size_t step = 1; step <= log_arr_len; ++step)
+    {
+        uint32_t i = tid;
+		uint32_t k = (1 << step);
+		uint32_t l = 2 * k;
+		while (i < arr_len / 2)
+		{
+			uint32_t first_index = l * (i / k) + (i % k);
+			uint32_t second_index = first_index + k;
+
+			uint32_t omega_idx = (1 << (log_arr_len - step - 1)) * (i % l); 
+			embedded_field omega = get_root_of_unity(omega_idx, omega_idx, coeff);
+
+			field_pair ops = fft_buttefly(temp_arr[first_index], temp_arr[second_index], omega);
+
+			temp_arr[first_index] = ops.a;
+			temp_arr[second_index] = ops.b;
+
+			i += blockDim.x * gridDim.x;
+		}
+		
+		__syncthreads();
+	}
+
+	output_arr
+
+
+
+		
+    }
+}
+
+__kernel__ void _basic_parallel_radix2_FFT(const embedded_field* input_arr, embedded_field* output_arr, size_t log_arr_len, size_t log_num_subblocks)
+{
+    __shared__ embedded_field temp_arr[];
+
+	assert( log_arr_len <= ROOTS_OF_UNTY_ARR_LEN, "the size of array is too large for FFT");
+	size_t arr_len = 1 << log_arr_len;
+	size_t omega_coeff = 1 << (ROOTS_OF_UNTY_ARR_LEN - log_arr_len);
+	size_t L = 1 << (log_arr_len - log_num_subblocks);
+	size_t NUM_SUBBLOCKS = 1 << log_num_subblocks;
+
+	embdedded_field omega_step = get_root_of_unity(blockIdx.x * L, omega_coeff);
+        
+    for (size_t i = threadIdx.x; i < L; i+= blockDim.x)
+    {
+        embdedded_field omega_init = get_root_of_unity(blockIdx.x * threadIdx.x, omega_coeff);
+		temp[i] = 0;
+		for (size_t s = 0; s < NUM_SUBBLOCKS; ++s)
+        {
+            size_t idx = i + s * L
+            temp_arr[i] += input_arr[idx] * omega_init;
+            omega_init *= omega_step;
+        }
+	}
+
+	__syncthreads();
+
+	embedded_field omega = get_root_of_unity(NUM_SUBBLOCKS, omega_coeff);
+	_basic_serial_radix2_FFT(temp_arr, temp_arr, log_arr_len, omega_idx_coeff);
+
+	for (size_t i = threadIdx.x; i < L; i+= blockDim.x)
+		output_arr[i * NUM_SUBBLOCKS + blockidx.x] = tmp_arr[i];
+}
+
+template<typename FieldT>
+void _basic_parallel_radix2_FFT(std::vector<FieldT> &a, const FieldT &omega)
+{
+#ifdef MULTICORE
+    const size_t num_cpus = omp_get_max_threads();
+#else
+    const size_t num_cpus = 1;
+#endif
+    const size_t log_cpus = ((num_cpus & (num_cpus - 1)) == 0 ? log2(num_cpus) : log2(num_cpus) - 1);
+
+#ifdef DEBUG
+    libff::print_indent(); printf("* Invoking parallel FFT on 2^%zu CPUs (omp_get_max_threads = %zu)\n", log_cpus, num_cpus);
+#endif
+
+    if (log_cpus == 0)
+    {
+        _basic_serial_radix2_FFT(a, omega);
+    }
+    else
+    {
+        _basic_parallel_radix2_FFT_inner(a, omega, log_cpus);
+    }
+}
+
+//make the same things using shuffle instructions
+
+//polynomial multiplication via FFT
+
+template<typename FieldT>
+void _polynomial_multiplication(std::vector<FieldT> &c, const std::vector<FieldT> &a, const std::vector<FieldT> &b)
+{
+    _polynomial_multiplication_on_fft(c, a, b);
+}
+
+template<typename FieldT>
+void _polynomial_multiplication_on_fft(std::vector<FieldT> &c, const std::vector<FieldT> &a, const std::vector<FieldT> &b)
+{
+    const size_t n = libff::get_power_of_two(a.size() + b.size() - 1);
+    FieldT omega = libff::get_root_of_unity<FieldT>(n);
+
+    std::vector<FieldT> u(a);
+    std::vector<FieldT> v(b);
+    u.resize(n, FieldT::zero());
+    v.resize(n, FieldT::zero());
+    c.resize(n, FieldT::zero());
+
+#ifdef MULTICORE
+    _basic_parallel_radix2_FFT(u, omega);
+    _basic_parallel_radix2_FFT(v, omega);
+#else
+    _basic_serial_radix2_FFT(u, omega);
+    _basic_serial_radix2_FFT(v, omega);
+#endif
+
+    std::transform(u.begin(), u.end(), v.begin(), c.begin(), std::multiplies<FieldT>());
+
+#ifdef MULTICORE
+    _basic_parallel_radix2_FFT(c, omega.inverse());
+#else
+    _basic_serial_radix2_FFT(c, omega.inverse());
+#endif
+
+    const FieldT sconst = FieldT(n).inverse();
+    std::transform(c.begin(), c.end(), c.begin(), std::bind1st(std::multiplies<FieldT>(), sconst));
+    _condense(c);
 }
 

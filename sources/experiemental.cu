@@ -567,4 +567,154 @@ void func_name##_driver_per_warp(const ec_point* a_arr, const uint256_g* b_arr, 
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
 
+//warp-based elliptic curve point addition
+
+//16 threads are used to calculate one operation
+#define THREADS_PER_ECC_ADD 16
+
+DEVICE_FUNC __inline__ bool is_leader_lane()
+{
+    return (threadIdx.x % THREADS_PER_ECC_ADD == 0);
+}
+
+//chose an element based on subwarp
+DEVICE_FUNC __inline__ uint32_t subwarp_choose_elem(const uint256_g& X, const uint256_g& Y, uint32_t lane, bool choice)
+{
+    uint256& temp = (choice ? X : Y);
+    return temp.n[lane];
+}
+
+DEVICE_FUNC __inline__ uint32_t subwarp_choose_elem(uint32_t X, uint32_t Y, bool choice)
+{
+    return (choice ? X : Y);
+}
+
+DEVICE_FUNC __inline__ uint32_t warp_based_field_add(uint32_t A, uint32_t B, uint32_t mask, uint32_t lane)
+{
+    uint32_t temp = warp_based_add(A, B, mask, lane);
+    if (warp_based_geq(temp, BASE_FIELD_P.n[lane], mask))
+    {
+        return warp_based_sub(temp, BASE_FIELD_P.n[lane], mask);
+    }
+    return temp;
+}
+
+DEVICE_FUNC __inline__ uint32_t warp_based_field_sub(uint32_t A, uint32_t B, uint32_t mask, uint32_t lane)
+{
+    if (warp_based_geq(A, B, mask, warp_idx))
+    {
+        return warp_based_sub(A, B, mask);
+    }
+    else
+    {
+        uint32_t temp = warp_based_add(A, BASE_FIELD_P.n[lane]);
+        return warp_based_sub(temp, B, mask);
+    }
+}
+else
+DEVICE_FUNC __inline__ uint32_t subwarps_exchange_elems(uint32_t A, uint32_t B, bool rrs)
+{
+    uint32_t elem = (rrs ? A : B);
+    return __shfl_down_sync(0xFFFFFFFF, elem, THREADS_PER_MUL, THREADS_PER_ECC_ADD);
+}
+
+DEVICE_FUNC void ECC_add_proj_warp_based(const ec_point& left, const ec_point& right, ec_point& OUT, uint32_t lane, uint32_t subwarp_mask)
+{
+    uint32_t exit_flag = 0;
+    size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    uint32_t warp_idx = tid / THREADS_PER_MUL;
+    uint32_t mask = (THREADS_PER_MUL - 1) << (warp_idx * THREADS_PER_MUL);
+    uint32_t lane = tid % THREADS_PER_MUL;
+    bool rrs = (warp_idx % THREADS_PER_ECC_ADD) < (THREADS_PER_ECC_ADD / 2 );
+
+    if (is_leader_lane())
+    {
+        if (is_infinity(A))
+        {
+            C = B;
+            exit_flag = 1;
+        }
+	    else if (is_infinity(B))
+        {
+		    C = A;
+            exit_flag = 1;
+        }
+    }
+
+    exit_flag = __shfl_sync(0xFFFFFFFF, exit_flag, 0, THREADS_PER_ECC_ADD);
+    if (exit_flag)
+        return;
+
+    uint32_t Z = subwarp_chooser(left.z, right.z, lane, rrs);
+    uint32_t Y = subwarp_chooser(right.y, left.y);
+    uint32_t U12 = mont_mul_warp_based(Z, Y);
+
+    uint32_t X = subwarp_chooser(right.x, left.x);
+    uint32_t V12 = mont_mul_warp_based(Z, X);
+
+    uint32_t U_V = subwarp_chooser(U12, V12, rrs);
+    uint32_t temp = warp_based_exchanger(V12, U12, rrs);
+
+    U_V = warp_based_field_sub(U_V, temp, mask, warp_idx, lane);
+    
+
+    //check for equality
+
+    //squaring of U and V:
+    uint32_t U_V_sq = mont_mul_warp_based(U_V, U_V);
+
+    temp = warp_based_exchanger(V12, U12, rrs);
+   
+	uint256_g Vcube = MONT_MUL(Vsq, V);
+	uint256_g W = MONT_MUL(left.z, right.z);
+
+	temp1 = MONT_MUL(temp1, W);
+    temp2 = MONT_MUL(BASE_FIELD_R2, Vsq);
+
+    temp2 = MONT_MUL(temp2, V2);
+    res.z = MONT_MUL(Vcube, W);
+
+    tempx = MONT_MUL(Vsq, V2);
+    temp3 = MONT_MUL(Vcube, U2);
+
+    //without pair
+    temp1 = FIELD_SUB(temp1, Vcube);
+    uint256_g A = FIELD_SUB(temp1, temp2);
+    tempx = FIELD_SUB(tempx, A);
+
+	res.x = MONT_MUL(V, A);	
+	tempx = MONT_MUL(U, tempx);
+	
+	res.y = FIELD_SUB(tempx, temp3);
+
+	
+	return res;
+
+}
+
+__global__ void ECC_add_proj_warp_based_kernel(const ec_point* a_arr, const ec_point* b_arr, ec_point *c_arr, size_t arr_len)
+{
+	size_t tid = threadIdx.x + blockIdx.x * blockDim.x);
+    size_t idx = tid / THREADS_PER_ECC_ADD;
+    uint32_t shift = (tid % WARP_SIZE ) / THREADS_PER_ECC_ADD; 
+    uint32_t subwarp_mask = 0xffff << (shift * THREADS_PER_ECC_ADD);
+    uint32_t lane = tid % THREADS_PER_ECC_ADD;
+
+	while (idx < arr_len)
+	{
+		ECC_add_proj_warp_based(a_arr[idx], b_arr[idx], c_arr[idx], lane, 0xffff);
+		idx += (blockDim.x * gridDim.x) / THREADS_PER_ECC_ADD;
+	}
+}
+
+void ECC_add_proj_warp_based_driver(const ec_point* a_arr, const ec_point* b_arr, ec_point* c_arr, size_t arr_len)
+{
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    uint32_t smCount = prop.multiProcessorCount;   
+    geometry2 geometry = find_geometry2(ECC_add_proj_warp_based_kernel, 0, uint32_t smCount);
+
+    std::cout << "Grid size: " << geometry.gridSize << ",  blockSize: " << geometry.blockSize << std::endl;
+    ECC_add_proj_warp_based_kernel<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, arr_len);
+}
 
