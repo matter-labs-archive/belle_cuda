@@ -436,6 +436,18 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
     {"Sorting based Pippenger", sorting_based_Pippenger_driver}
 };
 
+
+using FFT_func_vec_t = kernel_func_vec_t<uint256_g, uint256_g, uint256_g>;
+
+void naive_FFT_test_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
+void advanced_fft_test_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
+
+FFT_func_vec_t FFT_bench = {
+    {"naive FFT version", naive_FFT_test_driver},
+    {"Radix-2 FFT version", advanced_fft_test_driver}
+};
+
+
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------------------------------------------------------
@@ -495,6 +507,9 @@ int main(int argc, char* argv[])
     // std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
     // gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE, true);
 
+    std::cout << "FFT benchmark: " << std::endl << std::endl;
+    gpu_benchmark(FFT_bench, bench_len, OUTPUT_FILE);
+   
     return 0;
 }
 
