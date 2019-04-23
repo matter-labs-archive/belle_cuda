@@ -324,9 +324,11 @@ DEVICE_FUNC void _basic_serial_radix2_FFT(embedded_field* arr, size_t log_arr_le
 	size_t tid = threadIdx.x;
 	size_t arr_len = 1 << log_arr_len;
 
+	printf("kernel arr len: %d\n", arr_len);
+
 	for(size_t i = tid; i < arr_len; i+= blockDim.x)
-	{
-		size_t rk = __brev(i);
+	{	
+		size_t rk = __brev(i) >> (32 - log_arr_len);
 		if (i < rk)
 		{	
 			embedded_field temp = arr[i];
@@ -337,7 +339,7 @@ DEVICE_FUNC void _basic_serial_radix2_FFT(embedded_field* arr, size_t log_arr_le
 
 	__syncthreads();
 	
-    for (size_t step = 1; step <= log_arr_len; ++step)
+    for (size_t step = 0; step < log_arr_len; ++step)
     {
         uint32_t i = tid;
 		uint32_t k = (1 << step);
@@ -347,7 +349,7 @@ DEVICE_FUNC void _basic_serial_radix2_FFT(embedded_field* arr, size_t log_arr_le
 			uint32_t first_index = l * (i / k) + (i % k);
 			uint32_t second_index = first_index + k;
 
-			uint32_t omega_idx = (1 << (log_arr_len - step - 1)) * (i % l); 
+			uint32_t omega_idx = (1 << (log_arr_len - step - 1)) * (i % k); 
 			embedded_field omega = get_root_of_unity(omega_idx, omega_idx_coeff, is_inverse_FFT);
 
 			field_pair ops = fft_buttefly(arr[first_index], arr[second_index], omega);
@@ -361,6 +363,7 @@ DEVICE_FUNC void _basic_serial_radix2_FFT(embedded_field* arr, size_t log_arr_le
 		__syncthreads();
 	}
 }
+
 
 __global__ void _basic_parallel_radix2_FFT(const embedded_field* input_arr, embedded_field* output_arr, size_t log_arr_len, size_t log_num_subblocks,
 	bool is_inverse_FFT)
@@ -395,14 +398,39 @@ __global__ void _basic_parallel_radix2_FFT(const embedded_field* input_arr, embe
 		output_arr[i * NUM_SUBBLOCKS + blockIdx.x] = temp_arr[i];
 }
 
-geometry find_geometry_for_advanced_FFT(uint log_arr_len)
+__global__ void _radix2_one_block_FFT(const embedded_field* input_arr, embedded_field* output_arr, size_t log_arr_len, bool is_inverse_FFT)
+{
+	extern __shared__ embedded_field temp_arr[];
+	size_t arr_len = 1 << log_arr_len;
+
+	for (size_t i = threadIdx.x; i < arr_len; i+= blockDim.x)
+		temp_arr[i] = input_arr[i];
+
+	_basic_serial_radix2_FFT(temp_arr, log_arr_len, 1, is_inverse_FFT);
+
+	for (size_t i = threadIdx.x; i < arr_len; i+= blockDim.x)
+		output_arr[i] = temp_arr[i];
+}
+
+geometry find_geometry_for_advanced_FFT(uint arr_len)
 {
 	geometry res;
 	
-	//TODO: apply some heuristics!
-	uint32_t x = log_arr_len >> 1;
-	res.gridSize = (1 << x);
-	res.blockSize = (1 << (x - 1));
+	//TODO: apply some better heuristics!
+	size_t DEFAULT_FFT_BLOCK_SIZE = 512;
+
+	if (arr_len  <  2 * DEFAULT_FFT_BLOCK_SIZE)
+	{
+		res.gridSize = 1;
+		res.blockSize = max(arr_len / 2, 1);
+	}
+	else
+	{
+		res.gridSize = arr_len / (2 * DEFAULT_FFT_BLOCK_SIZE);
+		res.blockSize = DEFAULT_FFT_BLOCK_SIZE;
+	}
+	
+	std::cout << "grid_size: " << res.gridSize << ", block size: " << res.blockSize << std::endl;
 	return res;
 }
 
@@ -419,7 +447,19 @@ void advanced_fft_driver(embedded_field* input_arr, embedded_field* output_arr, 
     // cudaGetDeviceProperties(&prop, 0);
 	// uint32_t smCount = prop.multiProcessorCount;
 
-	geometry kernel_geometry = find_geometry_for_advanced_FFT(log_arr_len);
+	geometry kernel_geometry = find_geometry_for_advanced_FFT(arr_len);
+
+	if (kernel_geometry.gridSize == 1)
+	{
+		std::cout << "We are now here!" << std::endl;
+		
+		_radix2_one_block_FFT<<<1, kernel_geometry.blockSize, kernel_geometry.blockSize * 2>>>(input_arr, output_arr, 
+			log_arr_len, is_inverse_FFT);
+		cudaDeviceSynchronize();
+
+		return;
+	}
+
 	uint log_num_subblocks = BITS_PER_LIMB - __builtin_clz(kernel_geometry.blockSize) - 1;
 
 	_basic_parallel_radix2_FFT<<<kernel_geometry.gridSize, kernel_geometry.blockSize, kernel_geometry.blockSize * 2>>>(input_arr, output_arr, 
