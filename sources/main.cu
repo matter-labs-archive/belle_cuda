@@ -443,7 +443,7 @@ void naive_FFT_test_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 void advanced_fft_test_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 
 FFT_func_vec_t FFT_bench = {
-    //{"naive FFT version", naive_FFT_test_driver},
+    {"naive FFT version", naive_FFT_test_driver},
     {"Radix-2 FFT version", advanced_fft_test_driver}
 };
 
@@ -454,7 +454,7 @@ FFT_func_vec_t FFT_bench = {
 
 
 size_t max_bench_len = 10000000;
-size_t bench_len = 2;
+size_t bench_len = 32;
 
 const char* OUTPUT_FILE = "benches.txt";
 
