@@ -444,7 +444,7 @@ void advanced_fft_test_driver(uint256_g*, uint256_g*, uint256_g*, size_t);
 
 FFT_func_vec_t FFT_bench = {
     {"naive FFT version", naive_FFT_test_driver},
-    {"Radix-2 FFT version", advanced_fft_test_driver}
+    //{"Radix-2 FFT version", advanced_fft_test_driver}
 };
 
 
@@ -454,7 +454,7 @@ FFT_func_vec_t FFT_bench = {
 
 
 size_t max_bench_len = 10000000;
-size_t bench_len = max_bench_len;
+size_t bench_len = 4096;
 
 const char* OUTPUT_FILE = "benches.txt";
 
@@ -489,8 +489,8 @@ int main(int argc, char* argv[])
     // std::cout << "field inversion benchmark: " << std::endl << std::endl;
 	// gpu_benchmark(mul_inv_bench, bench_len);
 
-	std::cout << "montgomery multiplication benchmark: " << std::endl << std::endl;
-	gpu_benchmark(mont_mul_bench, bench_len);
+	// std::cout << "montgomery multiplication benchmark: " << std::endl << std::endl;
+	// gpu_benchmark(mont_mul_bench, bench_len);
 
     // std::cout << "ECC add-sub benchmark: " << std::endl << std::endl;
     // gpu_benchmark(add_sub_curve_points_bench, bench_len);

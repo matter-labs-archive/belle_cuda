@@ -230,12 +230,12 @@ geometry find_suitable_geometry(T func, uint shared_memory_used, uint32_t smCoun
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-__global__ void FFT_shuffle(embedded_field* __restrict__ input_arr, embedded_field* __restrict__ output_arr, uint32_t arr_len)
+__global__ void FFT_shuffle(embedded_field* __restrict__ input_arr, embedded_field* __restrict__ output_arr, uint32_t arr_len, uint32_t log_arr_len)
 {
 	uint32_t  tid = threadIdx.x + blockIdx.x * blockDim.x;
 	while (tid < arr_len)
 	{
-		output_arr[tid] = input_arr[__brev(tid)];
+		output_arr[tid] = input_arr[__brev(tid) >> (32 - log_arr_len)];
 		tid += blockDim.x * gridDim.x;
 	}
 }
@@ -243,16 +243,17 @@ __global__ void FFT_shuffle(embedded_field* __restrict__ input_arr, embedded_fie
 __global__ void FFT_iteration(embedded_field* __restrict__ input_arr, embedded_field* __restrict__ output_arr, 
 	uint32_t arr_len, uint32_t log_arr_len, uint32_t step)
 {
-	uint32_t  i = threadIdx.x + blockIdx.x * blockDim.x;
+	uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
 	uint32_t k = (1 << step);
 	uint32_t l = 2 * k;
+	size_t omega_coeff = 1 << (ROOTS_OF_UNTY_ARR_LEN - log_arr_len);
 	while (i < arr_len / 2)
 	{
 		uint32_t first_index = l * (i / k) + (i % k);
 		uint32_t second_index = first_index + k;
 
-		uint32_t root_of_unity_index = (1 << (log_arr_len - step - 1)) * (i % l); 
-		embedded_field omega = get_root_of_unity(root_of_unity_index);
+		uint32_t root_of_unity_index = (1 << (log_arr_len - step - 1)) * (i % k); 
+		embedded_field omega = get_root_of_unity(root_of_unity_index, omega_coeff);
 
 		field_pair ops = fft_buttefly(input_arr[first_index], input_arr[second_index], omega);
 
@@ -263,11 +264,14 @@ __global__ void FFT_iteration(embedded_field* __restrict__ input_arr, embedded_f
 	}
 }
 
+#include <iostream>
+
 void naive_fft_driver(embedded_field* input_arr, embedded_field* output_arr, uint32_t arr_len, bool is_inverse_FFT = false)
 {
 	//first check that arr_len is a power of 2
 
 	uint log_arr_len = BITS_PER_LIMB - __builtin_clz(arr_len) - 1;
+	std::cout << "Log arr len: " << log_arr_len << std::endl;
     assert(arr_len = (1 << log_arr_len));
 
 	//find optimal geometry
@@ -288,7 +292,7 @@ void naive_fft_driver(embedded_field* input_arr, embedded_field* output_arr, uin
 
 	embedded_field* temp_output_arr = (log_arr_len % 2 ? additional_device_memory : output_arr);
 	embedded_field* temp_input_arr = (log_arr_len % 2 ? output_arr : additional_device_memory);
-	FFT_shuffle<<<FFT_shuffle_geometry.gridSize, FFT_shuffle_geometry.blockSize>>>(input_arr, temp_output_arr, arr_len);
+	FFT_shuffle<<<FFT_shuffle_geometry.gridSize, FFT_shuffle_geometry.blockSize>>>(input_arr, temp_output_arr, arr_len, log_arr_len);
 	
 	//FFT main cycle
 

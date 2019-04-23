@@ -3457,5 +3457,20 @@ def Cocks_Pinch(r):
     
 
 if __name__ == "__main__":
-    Cocks_Pinch(STATIC_R) 
+    Cocks_Pinch(STATIC_R)
+
+
+#FFT
+
+p = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
+field = GF(p)
+R = field(0xe0a77c19a07df2f666ea36f7879462e36fc76959f60cd29ac96341c4ffffffb)
+root_of_unity = field(0x1860ef942963f9e756452ac01eb203d8a22bf3742445ffd6636e735580d13d9c) / R
+
+unity_order = root_of_unity.multiplicative_order()
+
+
+# def DFT(arr):
+#     n = len(arr)
+#     omega = root_of_unity ^ ()
 
