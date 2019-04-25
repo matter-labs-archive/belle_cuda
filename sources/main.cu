@@ -454,7 +454,7 @@ FFT_func_vec_t FFT_bench = {
 
 
 size_t max_bench_len = 10000000;
-size_t bench_len = 32;
+size_t bench_len = 1048576;
 
 const char* OUTPUT_FILE = "benches.txt";
 
@@ -471,6 +471,8 @@ int main(int argc, char* argv[])
 		printf("error");
 		return -1;
 	}
+
+    get_device_info();
 
     std::cout << "Benchmark length: " << bench_len << std::endl << std::endl;
 	

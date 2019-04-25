@@ -3474,3 +3474,286 @@ unity_order = root_of_unity.multiplicative_order()
 #     n = len(arr)
 #     omega = root_of_unity ^ ()
 
+#FFT
+
+p = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
+field = GF(p)
+R = field(0xe0a77c19a07df2f666ea36f7879462e36fc76959f60cd29ac96341c4ffffffb)
+root_of_unity = field(0x1860ef942963f9e756452ac01eb203d8a22bf3742445ffd6636e735580d13d9c) / R
+FILE_LOCATION = "/home/k/TestCuda3/benches.txt"
+
+unity_order = root_of_unity.multiplicative_order()
+
+#all elements of arr are given in Montgomery form
+
+def from_mont_form(arr):
+    return  [x / R for x in arr]
+
+
+def to_mont_form(arr):
+    return [x * R for x in arr]
+
+
+def DFT(arr):
+    n = len(arr)
+    omega = root_of_unity ^ (unity_order / n)
+    res = []
+    
+    temp_arr = from_mont_form(arr)
+    
+    
+    for i in xrange(n):
+        temp = field(0)
+        for j, elem in enumerate(temp_arr):
+            temp += elem * omega ^ (i * j)
+        res.append(temp)
+    
+    return to_mont_form(res)
+    #return [hex(int(x)) for x in to_mont_form(res)]
+
+
+def parse_bignum(line, base = 0x10):
+    return int(line, base)
+
+
+def read_arr(bench_len, file):
+    arr = []
+    
+    file.readline()
+    file.readline()
+
+    for _ in xrange(bench_len):
+        line = file.readline()
+        num = parse_bignum(line)
+        arr.append(field(num))
+        
+    return arr
+
+    
+
+def sample_from_file():
+    file = open(FILE_LOCATION, "r")
+
+    bench_len = parse_bignum(file.readline().split("=")[1][:-1], 10)
+    print bench_len
+    
+    A = read_arr(bench_len, file)
+    B = read_arr(bench_len, file)
+    C = read_arr(bench_len, file)
+    
+    D = DFT(A)
+    for i in xrange(bench_len):
+        if D[i] != C[i]:
+            print "arrs are different"
+            
+    print "finish"
+    
+
+#sample_from_file()
+
+p1 = 0x083b1dd3d6c0843fae9bb09e95158f5764bf9cbb0515bf9143f5cb2b7f1536fe
+p2 = 0x0ba2e900be028f16bd311017dc9545f2f74d31477ad8bfd7674dd4d3a2a069eb
+p3 = 0x14a5afe597f52ae505ed334eebedb320acf0c4cdf2be23e35c6a8b2dcfa13e45
+p4 = 0x1c6175902c4a3213c080aa86e2782ee4fbcd6894e323786a821deb245eb7d736
+p5 = 0x1dd4d3fc06ff0011014150f55a40a020886d509dfb6a491b938dad292f774b95
+p6 = 0x0195e7aef1e7d2d5ba5524798cf111e79fdda4cd0756b1b5f380445d6508353e
+p7 = 0x03895f2b40615fef7f70267a8fea0c3debf72cc34637f6f9dc61853f7c2e1ac4
+p8 = 0x1a4c045266b5a98ce3d997b8b66c7fd9e0eb4ddc0e02503aebe7385c9c859711
+p9 = 0x0ed73d9f62f863d0f78a292520efa0995f9e290b638a7b219127e38b03e1f570
+p10 = 0x0be73162cb2408f7ce004222d6279cb4d670e97788c30fe79b9be6d3bb511961
+p11 = 0x113c473bd3461acf1cfb2e051c6e3b06e9601a193ac12537370a848921091fcb
+p12 = 0x13e56fe6d060d52102f41a3b6b540d2e6491c330fc5c118e59d7b9b053232e98
+p13 = 0x18aaa2325496583e861dfbb5b128555e6efd8ff1580ae7276b55e84da11b512b
+p14 = 0x11d49f7050c55e869ac5c2999e4d65ddb959a071b583ad811c1395e17b73a298
+p15 = 0x136b14d52d7486b632c666b74c409f3fbb05f0c315ab1a79b333c12f4997840e
+p16 = 0x116200968e369020e7d826b7cdd3069f170684e0d2fe4fb6c90e335049856c5f
+p17 = 0x19ee1aafeb1f58d688ae355f38b2493be721f6a332821cb963bfe1233bb4c522
+p18 = 0x07b3b1d63b3d430d55e4c788b12feede3166a78fc2fb017f35c55cebc3359daf
+p19 = 0x12ab9035e6083e722b1018753df65d7c36f4d7a5c1f0cb7b344b9635cfb52361
+p20 = 0x08bc5940d63ed30efad5680b9048e6f0987fdb5c38cee6722f27e1bcb1e360f2
+p21 = 0x010a5ac63464d27e3d7a86449592f88c42a051fd161f1b7b007e6669a0c22131
+p22 = 0x106d3c230f7cd9a296cdf1f4f4f7725b97b0661d89330b05ad2b25adabde651a
+p23 = 0x1d61df3f70325a6ca9edaddda678aee9ce5f20eba366d5a189b18177cd759eb0
+p24 = 0x05971469512c5551f5f1bc158b78dc4d1b39a4c44ff404626ff0e754833db4bd
+p25 = 0x15019cdbb8d14a9de21c9ae4fdcb263579507fe34891607942b8d2537e20297c
+p26 = 0x11c06a331ac685f49636b7b19b814bd8de11efafed150dbf1651d33b4feef44d
+p27 = 0x06d5c14eb97dcd161d223e96364e39fac6cca3e9ace0ea073718925974e153cf
+p28 = 0x074e5513fd06baf21018bc7e680771623d1459805493c7dedb718000e819297c
+p29 = 0x179561276abe2c0144c95316a43bf7a279df81f9c42947aff70b1265e8e30a7f
+p30 = 0x0f464d8b562b04657c07ab6a5c40beb98360c9b967a98569512ccf394ec0199c
+p31 = 0x1dae8fc4b1c0e0095e298d04764788935ae648abf2e1c2e1c00511270e1eb992
+p32 = 0x0d0a3e5a6e75642bca03c6ba3939520bd4a47d308400020667952ba0923f9443
+
+arr = DFT([field(p1), field(p2), field(p3), field(p4), field(p5), field(p6), field(p7), field(p8),
+          field(p9), field(p10), field(p11), field(p12), field(p13), field(p14), field(p15), field(p16),
+          field(p17), field(p18), field(p19), field(p20), field(p21), field(p22), field(p23), field(p24),
+          field(p25), field(p26), field(p27), field(p28), field(p29), field(p30), field(p31), field(p32)])
+
+for elem in arr:
+    print hex(int(elem))
+
+
+
+DEVICE_FUNC void _basic_serial_radix2_FFT(embedded_field* arr, size_t log_arr_len, size_t omega_idx_coeff, bool is_inverse_FFT)
+{
+	size_t tid = threadIdx.x;
+	size_t arr_len = 1 << log_arr_len;
+
+	for(size_t i = tid; i < arr_len; i+= blockDim.x)
+	{	
+		size_t rk = __brev(i) >> (32 - log_arr_len);
+		if (i < rk)
+		{	
+			embedded_field temp = arr[i];
+			arr[i] = arr[rk];
+			arr[rk] = temp;
+		}
+	}
+
+	__syncthreads();
+	
+    for (size_t step = 0; step < log_arr_len; ++step)
+    {
+        uint32_t i = tid;
+		uint32_t k = (1 << step);
+		uint32_t l = 2 * k;
+		while (i < arr_len / 2)
+		{
+			uint32_t first_index = l * (i / k) + (i % k);
+			uint32_t second_index = first_index + k;
+
+			uint32_t omega_idx = (1 << (log_arr_len - step - 1)) * (i % k); 
+			embedded_field omega = get_root_of_unity(omega_idx, omega_idx_coeff, is_inverse_FFT);
+
+			field_pair ops = fft_buttefly(arr[first_index], arr[second_index], omega);
+
+			arr[first_index] = ops.a;
+			arr[second_index] = ops.b;
+
+			i += blockDim.x;
+		}
+		
+		__syncthreads();
+	}
+}
+
+__global__ void _basic_parallel_radix2_FFT(const embedded_field* input_arr, embedded_field* output_arr, size_t log_arr_len, 
+	size_t log_num_subblocks, bool is_inverse_FFT)
+{
+    extern __shared__ embedded_field temp_arr[];
+
+	assert( log_arr_len <= ROOTS_OF_UNTY_ARR_LEN && "the size of array is too large for FFT");
+
+	size_t omega_coeff = 1 << (ROOTS_OF_UNTY_ARR_LEN - log_arr_len);
+	size_t L = 1 << (log_arr_len - log_num_subblocks);
+	size_t NUM_SUBBLOCKS = 1 << log_num_subblocks;
+
+	embedded_field omega_step = get_root_of_unity(blockIdx.x * L, omega_coeff, is_inverse_FFT);
+        
+    for (size_t i = threadIdx.x; i < L; i+= blockDim.x)
+    {
+        embedded_field omega_init = get_root_of_unity(blockIdx.x * i, omega_coeff, is_inverse_FFT);
+		temp_arr[i] = embedded_field::zero();
+		for (size_t s = 0; s < NUM_SUBBLOCKS; ++s)
+        {
+            size_t idx = i + s * L;
+            temp_arr[i] += input_arr[idx] * omega_init;
+            omega_init *= omega_step;
+        }
+	}
+
+	__syncthreads();
+
+	_basic_serial_radix2_FFT(temp_arr, log_arr_len - log_num_subblocks, NUM_SUBBLOCKS * omega_coeff, is_inverse_FFT);
+
+	for (size_t i = threadIdx.x; i < L; i+= blockDim.x)
+		output_arr[i * NUM_SUBBLOCKS + blockIdx.x] = temp_arr[i];
+}
+
+__global__ void _radix2_one_block_FFT(const embedded_field* input_arr, embedded_field* output_arr, size_t log_arr_len, bool is_inverse_FFT)
+{
+	extern __shared__ embedded_field temp_arr[];
+	size_t arr_len = 1 << log_arr_len;
+	size_t omega_coeff = 1 << (ROOTS_OF_UNTY_ARR_LEN - log_arr_len);
+
+	
+	for (size_t i = threadIdx.x; i < arr_len; i+= blockDim.x)
+	{
+		temp_arr[i] = input_arr[i];
+	}
+
+	_basic_serial_radix2_FFT(temp_arr, log_arr_len, omega_coeff, is_inverse_FFT);
+
+	for (size_t i = threadIdx.x; i < arr_len; i+= blockDim.x)
+		output_arr[i] = temp_arr[i];
+}
+
+geometry find_geometry_for_advanced_FFT(uint arr_len)
+{
+	geometry res;
+
+	size_t DEFAULT_FFT_GRID_SIZE = 16;
+
+	return {DEFAULT_FFT_GRID_SIZE, arr_len / (2 * DEFAULT_FFT_GRID_SIZE)};
+
+	//return geometry{4, 4};
+	
+	//TODO: apply some better heuristics!
+	size_t DEFAULT_FFT_BLOCK_SIZE = 128;
+
+	if (arr_len  <  2 * DEFAULT_FFT_BLOCK_SIZE)
+	{
+		res.gridSize = 1;
+		res.blockSize = max(arr_len / 2, 1);
+	}
+	else
+	{
+		res.gridSize = arr_len / (2 * DEFAULT_FFT_BLOCK_SIZE);
+		res.blockSize = DEFAULT_FFT_BLOCK_SIZE;
+	}
+	
+	std::cout << "grid_size: " << res.gridSize << ", block size: " << res.blockSize << std::endl;
+	return res;
+}
+
+void advanced_fft_driver(embedded_field* input_arr, embedded_field* output_arr, uint32_t arr_len, bool is_inverse_FFT = false)
+{
+	//first check that arr_len is a power of 2
+
+	uint log_arr_len = BITS_PER_LIMB - __builtin_clz(arr_len) - 1;
+    assert(arr_len = (1 << log_arr_len));
+
+	
+
+	//find optimal geometry
+
+	cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+
+	uint32_t shared_mem_per_block = prop.sharedMemPerBlock;
+    std::cout << "SIZE OF SHARED ARR: " << shared_mem_per_block / sizeof(embedded_field) << std::endl;
+
+
+	geometry kernel_geometry = find_geometry_for_advanced_FFT(arr_len);
+
+	if (kernel_geometry.gridSize == 1)
+	{
+		std::cout << "We are now here!" << std::endl;
+		
+		_radix2_one_block_FFT<<<1, kernel_geometry.blockSize, kernel_geometry.blockSize * 2 * sizeof(embedded_field)>>>(input_arr, output_arr, 
+			log_arr_len, is_inverse_FFT);
+		cudaDeviceSynchronize();
+
+		return;
+	}
+
+	uint log_num_subblocks = BITS_PER_LIMB - __builtin_clz(kernel_geometry.gridSize) - 1;
+	std::cout << "log arr len: " << log_arr_len << ", log_num_subblocks: " << log_num_subblocks << std::endl;
+	std::cout << "Initialization phase size: " <<  (1 << (log_arr_len - log_num_subblocks)) << std::endl;
+
+	_basic_parallel_radix2_FFT<<<kernel_geometry.gridSize, kernel_geometry.blockSize, 
+		kernel_geometry.blockSize * 2 * sizeof(embedded_field)>>>(input_arr, output_arr, 
+		log_arr_len, log_num_subblocks, is_inverse_FFT);
+	cudaDeviceSynchronize();
+}
+    

@@ -130,6 +130,7 @@ DEVICE_FUNC inline void set_bit(uint256_g& x, uint32_t index)
 
 //initialization function
 bool CUDA_init();
+void get_device_info();
 
 
 #ifdef __CUDACC__

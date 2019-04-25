@@ -319,7 +319,7 @@ void naive_fft_driver(embedded_field* input_arr, embedded_field* output_arr, uin
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
 
-//TODO: make the same things using shuffle instructions
+//TODO: make the same things using shuffle instructions and shared memory
 
 DEVICE_FUNC void _basic_serial_radix2_FFT(embedded_field* arr, size_t log_arr_len, size_t omega_idx_coeff, bool is_inverse_FFT)
 {
@@ -364,16 +364,16 @@ DEVICE_FUNC void _basic_serial_radix2_FFT(embedded_field* arr, size_t log_arr_le
 	}
 }
 
-__global__ void _basic_parallel_radix2_FFT(const embedded_field* input_arr, embedded_field* output_arr, size_t log_arr_len, 
-	size_t log_num_subblocks, bool is_inverse_FFT)
+__global__ void _basic_parallel_radix2_FFT(const embedded_field* input_arr, embedded_field* output_arr, embedded_field* temp_arr_base, 
+	size_t log_arr_len, size_t log_num_subblocks, bool is_inverse_FFT)
 {
-    extern __shared__ embedded_field temp_arr[];
-
 	assert( log_arr_len <= ROOTS_OF_UNTY_ARR_LEN && "the size of array is too large for FFT");
 
 	size_t omega_coeff = 1 << (ROOTS_OF_UNTY_ARR_LEN - log_arr_len);
 	size_t L = 1 << (log_arr_len - log_num_subblocks);
 	size_t NUM_SUBBLOCKS = 1 << log_num_subblocks;
+
+	embedded_field* temp_arr = temp_arr_base + L * blockIdx.x;
 
 	embedded_field omega_step = get_root_of_unity(blockIdx.x * L, omega_coeff, is_inverse_FFT);
         
@@ -417,12 +417,12 @@ __global__ void _radix2_one_block_FFT(const embedded_field* input_arr, embedded_
 
 geometry find_geometry_for_advanced_FFT(uint arr_len)
 {
-	geometry res;
+	//TODO: this particular values are customized for my architecture
 
-	//return geometry{4, 4};
-	
-	//TODO: apply some better heuristics!
+	size_t DEFAULT_FFT_GRID_SIZE = 8;
 	size_t DEFAULT_FFT_BLOCK_SIZE = 512;
+
+	geometry res;
 
 	if (arr_len  <  2 * DEFAULT_FFT_BLOCK_SIZE)
 	{
@@ -431,8 +431,8 @@ geometry find_geometry_for_advanced_FFT(uint arr_len)
 	}
 	else
 	{
-		res.gridSize = arr_len / (2 * DEFAULT_FFT_BLOCK_SIZE);
-		res.blockSize = DEFAULT_FFT_BLOCK_SIZE;
+		res.gridSize = min(DEFAULT_FFT_GRID_SIZE, arr_len / (2 * DEFAULT_FFT_BLOCK_SIZE));
+		res.blockSize = min(DEFAULT_FFT_BLOCK_SIZE, (size_t)(arr_len / (2 * res.gridSize)));
 	}
 	
 	std::cout << "grid_size: " << res.gridSize << ", block size: " << res.blockSize << std::endl;
@@ -446,17 +446,11 @@ void advanced_fft_driver(embedded_field* input_arr, embedded_field* output_arr, 
 	uint log_arr_len = BITS_PER_LIMB - __builtin_clz(arr_len) - 1;
     assert(arr_len = (1 << log_arr_len));
 
-	//find optimal geometry
-
-	// cudaDeviceProp prop;
-    // cudaGetDeviceProperties(&prop, 0);
-	// uint32_t smCount = prop.multiProcessorCount;
-
 	geometry kernel_geometry = find_geometry_for_advanced_FFT(arr_len);
 
 	if (kernel_geometry.gridSize == 1)
 	{
-		std::cout << "We are now here!" << std::endl;
+		std::cout << "1block FFT - serial" << std::endl;
 		
 		_radix2_one_block_FFT<<<1, kernel_geometry.blockSize, kernel_geometry.blockSize * 2 * sizeof(embedded_field)>>>(input_arr, output_arr, 
 			log_arr_len, is_inverse_FFT);
@@ -465,13 +459,19 @@ void advanced_fft_driver(embedded_field* input_arr, embedded_field* output_arr, 
 		return;
 	}
 
-	uint log_num_subblocks = BITS_PER_LIMB - __builtin_clz(kernel_geometry.gridSize) - 1;
-	std::cout << "log arr len: " << log_arr_len << ", log_num_subblocks: " << log_num_subblocks << std::endl;
+	size_t num_of_blocks = kernel_geometry.gridSize;
+	uint log_num_subblocks = BITS_PER_LIMB - __builtin_clz(num_of_blocks) - 1;
+	size_t block_size = 1 << (log_arr_len - log_num_subblocks);
 
-	_basic_parallel_radix2_FFT<<<kernel_geometry.gridSize, kernel_geometry.blockSize, 
-		kernel_geometry.blockSize * 2 * sizeof(embedded_field)>>>(input_arr, output_arr, 
+	//allocate temporary memory
+	embedded_field* temp_memory = nullptr;
+	cudaError_t cudaStatus = cudaMalloc((void **)&temp_memory, num_of_blocks * block_size * sizeof(embedded_field));
+
+	_basic_parallel_radix2_FFT<<<kernel_geometry.gridSize, kernel_geometry.blockSize>>>(input_arr, output_arr, temp_memory,
 		log_arr_len, log_num_subblocks, is_inverse_FFT);
 	cudaDeviceSynchronize();
+
+	cudaFree(temp_memory);
 }
 
 #define FFT_DRIVER(input_arr, output_arr, arr_len, is_inverse_FFT) advanced_fft_driver(input_arr, output_arr, arr_len, is_inverse_FFT)
