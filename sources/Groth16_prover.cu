@@ -77,6 +77,24 @@ void field_func_invoke(embedded_field* a_arr, const embedded_field* b_arr, uint3
     (*func)<<<geometry.gridSize, geometry.blockSize, 0, stream>>>(a_arr, b_arr, arr_len);
 }
 
+__global__ void field_fused_mul_sub_inplace_kernel(embedded_field* a_arr, const embedded_field* b_arr, 
+    const embedded_field* c_arr, size_t arr_len)
+{
+	size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	while (tid < arr_len)
+	{
+		a_arr[tid] *= b_arr[tid];
+        a_arr[tid] -= c_arr[tid];
+		tid += blockDim.x * gridDim.x;
+	}
+}
+
+void fused_mul_sub(embedded_field* a_arr, const embedded_field* b_arr, const embedded_field* c_arr, uint32_t arr_len, uint32_t smCount)
+{
+    Geometry geometry = find_suitable_geometry(field_fused_mul_sub_inplace_kernel, 0, smCount);
+    field_fused_mul_sub_inplace_kernel<<<geometry.gridSize, geometry.blockSize>>>(a_arr, b_arr, c_arr, arr_len);
+}
+
 //----------------------------------------------------------------------------------------------------------------------------------------------
 //FFT
 //----------------------------------------------------------------------------------------------------------------------------------------------
@@ -192,9 +210,9 @@ __global__ void mont_reduce_kernel(embedded_field* arr, size_t arr_len)
 	}
 }
 
-void mont_reduce(embedded_field* arr, size_t arr_len, const Geometry& geometry)
+void mont_reduce(embedded_field* arr, size_t arr_len, const Geometry& geometry, cudaStream_t& stream)
 {  
-    mont_reduce_kernel<<<geometry.gridSize, geometry.blockSize>>>(arr, arr_len);
+    mont_reduce_kernel<<<geometry.gridSize, geometry.blockSize, 0, stream>>>(arr, arr_len);
 }
 
 DEVICE_FUNC embedded_field __inline__ get_gen_power(size_t index)
@@ -331,50 +349,52 @@ affine_point Groth16_proof(const Groth16_prover_data* pr_data)
     assert(a_domain_len == b_domain_len);
     assert(b_domain_len == c_domain_len);
 
+    size_t domain_len = a_domain_len;
+
     //lock memory and copy asynchroniously to device
     assert(mlock(pr_data->a_arr, pr_data->a_len * sizeof(embedded_field)) == 0);
     assert(mlock(pr_data->b_arr, pr_data->b_len * sizeof(embedded_field)) == 0);
     assert(mlock(pr_data->c_arr, pr_data->c_len * sizeof(embedded_field)) == 0);
-    assert(mlock(pr_data->h_arr, a_domain_len * sizeof(affine_point)) == 0);
+    assert(mlock(pr_data->h_arr, domain_len * sizeof(affine_point)) == 0);
 
     embedded_field* dev_a = nullptr, *dev_b = nullptr, *dev_c = nullptr; 
 
-    HANDLE_ERROR(cudaMalloc((void**)&dev_a, a_domain_len * sizeof(embedded_field)));
-    HANDLE_ERROR(cudaMalloc((void**)&dev_b, b_domain_len * sizeof(affine_point)));
-    HANDLE_ERROR(cudaMalloc((void**)&dev_c, c_domain_len * sizeof(embedded_field)));
+    HANDLE_ERROR(cudaMalloc((void**)&dev_a, domain_len * sizeof(embedded_field)));
+    HANDLE_ERROR(cudaMalloc((void**)&dev_b, domain_len * sizeof(affine_point)));
+    HANDLE_ERROR(cudaMalloc((void**)&dev_c, domain_len * sizeof(embedded_field)));
 
     HANDLE_ERROR(cudaMemcpyAsync(dev_a, pr_data->a_arr, pr_data->a_len * sizeof(embedded_field), cudaMemcpyHostToDevice, stream1));
     HANDLE_ERROR(cudaMemcpyAsync(dev_b, pr_data->b_arr, pr_data->b_len * sizeof(embedded_field), cudaMemcpyHostToDevice, stream2));
     HANDLE_ERROR(cudaMemcpyAsync(dev_c, pr_data->c_arr, pr_data->c_len * sizeof(embedded_field), cudaMemcpyHostToDevice, stream3));
     	
-    HANDLE_ERROR(cudaMemsetAsync(dev_a + pr_data->a_len, 0, (a_domain_len - pr_data->a_len) * sizeof(embedded_field), stream1));
-    HANDLE_ERROR(cudaMemsetAsync(dev_b + pr_data->b_len, 0, (b_domain_len - pr_data->b_len) * sizeof(embedded_field), stream2));
-    HANDLE_ERROR(cudaMemsetAsync(dev_c + pr_data->c_len, 0, (c_domain_len - pr_data->a_len) * sizeof(embedded_field), stream3));
+    HANDLE_ERROR(cudaMemsetAsync(dev_a + pr_data->a_len, 0, (domain_len - pr_data->a_len) * sizeof(embedded_field), stream1));
+    HANDLE_ERROR(cudaMemsetAsync(dev_b + pr_data->b_len, 0, (domain_len - pr_data->b_len) * sizeof(embedded_field), stream2));
+    HANDLE_ERROR(cudaMemsetAsync(dev_c + pr_data->c_len, 0, (domain_len - pr_data->a_len) * sizeof(embedded_field), stream3));
 
     Geometry FFT_geometry = find_suitable_geometry(fft_iteration, 0, prop.multiProcessorCount);
-    FFT_geometry.gridSize /= 3;
 
-    iFFT(dev_a, a_domain_len, *m_inv, FFT_geometry, stream1, 0);
-    cosetFFT(dev_a, a_domain_len, FFT_geometry, stream1);
+    iFFT(dev_a, domain_len, *m_inv, FFT_geometry, stream1, 0);
+    cosetFFT(dev_a, domain_len, FFT_geometry, stream1);
 
-    iFFT(dev_b, b_domain_len, *m_inv, FFT_geometry, stream2, 0);
-    cosetFFT(dev_b, b_domain_len, FFT_geometry, stream2);
+    iFFT(dev_b, domain_len, *m_inv, FFT_geometry, stream2, 0);
+    cosetFFT(dev_b, domain_len, FFT_geometry, stream2);
 
-    iFFT(dev_c, c_domain_len, *m_inv, FFT_geometry, stream3, 0);
-    cosetFFT(dev_c, c_domain_len, FFT_geometry, stream3);
+    iFFT(dev_c, domain_len, *m_inv, FFT_geometry, stream3, 0);
+    cosetFFT(dev_c, domain_len, FFT_geometry, stream3);
 
     HANDLE_ERROR( cudaStreamSynchronize( stream1 ) );
     HANDLE_ERROR( cudaStreamSynchronize( stream2 ) );
-    field_func_invoke(dev_a, dev_b, a_domain_len, stream1, prop.multiProcessorCount, field_mul_inplace_kernel);
-    
-    HANDLE_ERROR( cudaStreamSynchronize( stream1 ) );
     HANDLE_ERROR( cudaStreamSynchronize( stream3 ) );
-    field_func_invoke(dev_a, dev_c, a_domain_len, stream1, prop.multiProcessorCount, field_sub_inplace_kernel);
-    HANDLE_ERROR(cudaMemcpyAsync(dev_b, pr_data->h_arr, (a_domain_len - 1) * sizeof(affine_point), cudaMemcpyHostToDevice, stream2));
 
-    FFT_geometry.gridSize *= 3;
-    mul_by_const(dev_a, a_domain_len, *tau_inv, FFT_geometry, stream1, 1);
-    icosetFFT(dev_a, a_domain_len, *m_inv, FFT_geometry, stream1, 0);
+    fused_mul_sub(dev_a, dev_b, dev_c, domain_len, prop.multiProcessorCount);
+    cudaDeviceSynchronize();
+   
+    mul_by_const(dev_a, domain_len, *tau_inv, FFT_geometry, stream1, 1);
+    icosetFFT(dev_a, domain_len, *m_inv, FFT_geometry, stream1, 0);
+    Geometry mont_reduce_geometry = find_suitable_geometry(mont_reduce_kernel, 0, prop.multiProcessorCount);
+    mont_reduce(dev_a, domain_len - 1, mont_reduce_geometry, stream1);
+
+    HANDLE_ERROR(cudaMemcpyAsync(dev_b, pr_data->h_arr, (domain_len - 1) * sizeof(affine_point), cudaMemcpyHostToDevice, stream2));
 
     HANDLE_ERROR( cudaStreamSynchronize( stream1 ) );
     HANDLE_ERROR( cudaStreamSynchronize( stream2 ) );
@@ -387,11 +407,9 @@ affine_point Groth16_proof(const Groth16_prover_data* pr_data)
     munlock(pr_data->a_arr, pr_data->a_len * sizeof(embedded_field));
     munlock(pr_data->b_arr, pr_data->b_len * sizeof(embedded_field));
     munlock(pr_data->c_arr, pr_data->c_len * sizeof(embedded_field));
-    munlock(pr_data->h_arr, (a_domain_len - 1) * sizeof(affine_point));
+    munlock(pr_data->h_arr, (domain_len - 1) * sizeof(affine_point));
 
-    Geometry mont_reduce_geometry = find_suitable_geometry(mont_reduce_kernel, 0, prop.multiProcessorCount);
-    mont_reduce(dev_a, a_domain_len - 1, mont_reduce_geometry);
-    large_Pippenger_driver((affine_point*)dev_b, (uint256_g*)dev_a, (ec_point*)dev_c, a_domain_len - 1);
+    large_Pippenger_driver((affine_point*)dev_b, (uint256_g*)dev_a, (ec_point*)dev_c, domain_len - 1);
 
     affine_point res;
     HANDLE_ERROR(cudaMemcpy(&res, dev_c, sizeof(affine_point), cudaMemcpyDeviceToHost));
@@ -402,6 +420,7 @@ affine_point Groth16_proof(const Groth16_prover_data* pr_data)
 
     return res;
 }
+
 
 extern "C"
 {
@@ -429,6 +448,48 @@ extern "C"
 
         return 0;
     };
+
+    //if flag in_mont_form = TRUE then tthe array of powers is in mont form and all the numbers should be converted to standard form
+    //inside the CUDA kernel
+
+    int EXPORT multiexp_on_device(size_t len, const uint8_t* point_repr, const uint8_t* power_repr, bool repr_flag, uint8_t* result_ptr)
+    {
+        affine_point* dev_point_arr = nullptr;
+        uint256_g* dev_power_arr  = nullptr;
+        ec_point* dev_res = nullptr;
+
+        HANDLE_ERROR(cudaMalloc((void**)&dev_point_arr, len * sizeof(affine_point)));
+        HANDLE_ERROR(cudaMalloc((void**)&dev_power_arr, len * sizeof(uint256_g)));
+        HANDLE_ERROR(cudaMalloc((void**)&dev_res, sizeof(ec_point)));
+  
+        HANDLE_ERROR(cudaMemcpy(dev_point_arr, point_repr, len * sizeof(affine_point), cudaMemcpyHostToDevice));
+        HANDLE_ERROR(cudaMemcpy(dev_power_arr, power_repr, len * sizeof(uint256_g), cudaMemcpyHostToDevice));
+
+        if (repr_flag)
+        {
+            cudaDeviceProp prop;
+            HANDLE_ERROR(cudaGetDeviceProperties(&prop, 0));
+
+            Geometry mont_reduce_geometry = find_suitable_geometry(mont_reduce_kernel, 0, prop.multiProcessorCount);
+            cudaStream_t stream = 0;
+            mont_reduce((embedded_field*)dev_power_arr, len, mont_reduce_geometry, stream);
+        }
+
+        large_Pippenger_driver(dev_point_arr, dev_power_arr, dev_res, len);
+
+        affine_point res;
+        HANDLE_ERROR(cudaMemcpy(&res, dev_res, sizeof(affine_point), cudaMemcpyDeviceToHost));
+
+        HANDLE_ERROR(cudaFree(dev_point_arr));
+        HANDLE_ERROR(cudaFree(dev_power_arr));
+        HANDLE_ERROR(cudaFree(dev_res));
+
+        memcpy(result_ptr, &res, sizeof(affine_point));
+
+        return 0;
+    };
+
+
 }
 
 
