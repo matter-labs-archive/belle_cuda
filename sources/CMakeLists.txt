@@ -1,16 +1,24 @@
 add_executable(cuda_benches main.cu basic_arithmetic.cu constants.cu kernels.cu mont_mul.cu mul_128_to_256.cu
     mul_256_to_512.cu square_256_to_512.cu ell_point.cu ecc_exp.cu CUDA_init.cu finitefield.cu multiexp.cu FFT.cu experiemental.cu
     device_info.cu)
-target_compile_features(cuda_benches PUBLIC cxx_std_14)
 
-target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES_INPUT)
-target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES_OUTPUT)
+add_library(cuda SHARED basic_arithmetic.cu constants.cu mont_mul.cu mul_128_to_256.cu
+   mul_256_to_512.cu square_256_to_512.cu ell_point.cu ecc_exp.cu CUDA_init.cu finitefield.cu multiexp.cu device_info.cu 
+   Groth16_prover.cu)
+target_compile_features(cuda_benches PUBLIC cxx_std_14)
+target_compile_features(cuda PUBLIC cxx_std_14)
+
+#target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES_INPUT)
+#target_compile_definitions(cuda_benches PRIVATE PRINT_BENCHES_OUTPUT)
 target_compile_definitions(cuda_benches PRIVATE ZERO_BANK_CONFLICTS)
+target_compile_definitions(cuda PRIVATE ZERO_BANK_CONFLICTS)
  
 # We need to explicitly state that we need all CUDA files in the 
 # particle library to be built with -dc as the member functions 
 # could be called by other libraries and executables
 set_target_properties(cuda_benches PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+set_target_properties(cuda PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+#set_property(TARGET cuda PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 #target_include_directories(cuda_benches PRIVATE ${PROJECT_SOURCE_DIR}/depends/CUB)
 

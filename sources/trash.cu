@@ -26,9 +26,6 @@ __device__ inline uint512_g mul_uint256_to_512_asm(const uint256_g& u, const uin
 }
 
 
-
-
-
 //let u = u1 + u2 * 2^n
 //let v = v1 + v2 * 2^n
 //result = (u1 * v1) + 2^n * ((u1 + u2)(v1 + v2) - (u1 * v1)(u2 * v2))  + 2^(2n) u2 * v2;
@@ -3756,4 +3753,400 @@ void advanced_fft_driver(embedded_field* input_arr, embedded_field* output_arr, 
 		log_arr_len, log_num_subblocks, is_inverse_FFT);
 	cudaDeviceSynchronize();
 }
+    
+
+import math
+
+EMBD_DEGREES = [6, 12, 24]
+START_DISCR = -5460
+STATIC_R = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+
+
+def check_embedding_degree(r):
+    for k in EMBD_DEGREES:
+        if (r - 1) % k == 0:
+            return True
+    return False
+
+
+def get_root_of_unity(r, k):
+    field = GF(r)
+    gen = field.multiplicative_generator()
+    a = (r - 1) / (k)
+    root_of_unity = gen ^ a
+    return root_of_unity
+
+    
+def get_params(r):
+    D = START_DISCR
+    field = GF(r)
+    
+    while True:
+        if D % 4 == 2 or D % 4 == 3:
+            D -= 1
+            continue
+            
+        if kronecker(-D, r) != 1:
+            D -= 1
+            continue
+        
+        for k in EMBD_DEGREES:
+            if (r - 1) % k == 0:
+                g = get_root_of_unity(r, k)
+                t_ = g + 1
+                u_ = (t_ - 2) / field(-D).sqrt()
+    
+                t = int(t_)
+                u = int(u_)
+                p = (t^2 + D * u^2) / 4
+
+                if p in ZZ and p in Primes():
+                    return D, p, g, k
+        D -=1
+        print D
+
+    
+def get_curve_params(D, p):
+    if D == -4:
+        return (-1, 0)
+    if D== -3:
+        return (0, -1)
+    
+    field = GF(p)
+    Hilbert_poly = hilbert_class_polynomial(D)
+    reduced_poly = Hilbert_poly.change_ring(field)
+    j = reduced_poly.roots()[0][0]
+    print j
+    
+    c = j/(j - field(1728))
+    r = field(-3)*c
+    s = field(2)*c
+    
+    return (r, s)
+
+
+def Cocks_Pinch(r):
+    if not check_embedding_degree(r):
+        print "Unsatisfiable"
+        return False
+
+    D, p, g, k = get_params(r)
+
+    A, B = get_curve_params(D, p)
+    
+    base_field = GF(p)
+    extension_field = GF(p^k, name = 't')
+    ext_field_modulus = extension_field.modulus()
+    
+    return p, A, B, k
+
+
+def test_ring_change():
+    c = PolynomialRing(ZZ, 'w')
+    poly = c("w - 5")
+    reduced_poly = poly.change_ring(GF(3))
+    print reduced_poly.roots()
+    
+    
+def check_curve(p, A, B, k, r):
+    field = GF(p)
+    curve = EllipticCurve(field, A, B)
+    print "HERE!"
+    print "order:", factor(curve.order())
+
+    
+if __name__ == "__main__":
+    
+    p, A, B, k = Cocks_Pinch(STATIC_R)
+    #check_curve(p, A, B, k, r)
+    
+    print "Base Field = ", p
+    print "A = ", A
+    print "B = ", B
+    print "k = ", k
+
+
+//-------------------------------------------
+p = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
+field = GF(p)
+
+R = field(0xe0a77c19a07df2f666ea36f7879462e36fc76959f60cd29ac96341c4ffffffb)
+gen = field(7)
+
+
+
+
+
+DEVICE_FUNC CONST_MEMORY uint256_g EMBEDDED_FIELD_ROOTS_OF_UNITY[] = {
+	{ 0x80d13d9c, 0x636e7355, 0x2445ffd6, 0xa22bf374, 0x1eb203d8, 0x56452ac0, 0x2963f9e7, 0x1860ef94 },
+	{ 0x80890267, 0x87596414, 0xe4c00349, 0x4a3a78b5, 0x52a6b17e, 0x49004fdd, 0x65e6ea12, 0x284517dd },
+	{ 0xc98a20fe, 0xa0a29422, 0x65935c9d, 0x73d462ca, 0xd44582f7, 0xe1ba4a6e, 0x0c3a82b6, 0x28fc14c0 },
+	{ 0x575c07e2, 0x400efaff, 0x4b8f9ac5, 0x55237349, 0x81e7ad37, 0xaa79abed, 0x084d2e39, 0x1ac6e5b8 },
+	{ 0xd84fd030, 0xc722bd69, 0xcf52162c, 0x600e4a26, 0x45f3a7e9, 0xfb727ed7, 0x69fb275c, 0x1652a7b2 },
+	{ 0xc09e9100, 0x6e482404, 0x590025b2, 0x0d7591c7, 0x3a5ebe11, 0xa4022779, 0xc1a94ca8, 0x0164a6c3 },
+	{ 0xbcef1af2, 0x9b8e226e, 0xdf406b60, 0x9e45f1ab, 0xd5a7bb3d, 0x538dd257, 0x7882a3bc, 0x0a389303 },
+	{ 0xf5322f3c, 0x27ea2192, 0x658fe9a7, 0xb11884e9, 0xa053c069, 0x3a8623bc, 0x25e139a6, 0x128ff3f0 },
+	{ 0xaa8d931a, 0xda32d465, 0x61808f9c, 0x2669f685, 0xe4c8b085, 0x247bab46, 0x81d6021a, 0x0d3b6687 },
+	{ 0xe6a27a36, 0x049ea3b7, 0x053edbbc, 0xefebe603, 0x3ace9ed4, 0x8424b45a, 0xa688795e, 0x287c8390 },
+	{ 0x09700b84, 0x2566c62f, 0xa0bf8660, 0x33183a76, 0x575058f1, 0xd9398f59, 0x39d1cd34, 0x056d2ece },
+	{ 0x1204dc7c, 0xda05b8d8, 0x06308d41, 0x48322ae6, 0x849e892c, 0x35358e27, 0xd62dd592, 0x040fcafb },
+	{ 0x39397433, 0x47b3e759, 0x0d1c24d1, 0x6d3a3a92, 0x74f75f43, 0xa1341251, 0xee6ad556, 0x1b821f01 },
+	{ 0x5bfdb854, 0x804ef705, 0x40ceeaf2, 0x7aa76b71, 0xb2fe89cb, 0xfcc95a68, 0xf1c406c7, 0x1d461c35 },
+	{ 0x4d05eab8, 0xba13a0c7, 0x11ab3116, 0x2e015d63, 0x8ca5a05a, 0xb503922c, 0xfee394da, 0x06be15d7 },
+	{ 0x79a04ed6, 0x894cdcbe, 0x44d30787, 0x956cde6a, 0xd7dbc15f, 0x59a1b62b, 0x9a806f4e, 0x12ebe410 },
+	{ 0xb3ecdbd3, 0x1dd4522f, 0xd055f3ad, 0x68222a93, 0xb3d555e8, 0xbe9c7d66, 0x6194f846, 0x1b92f6b8 },
+	{ 0xae4fcfb2, 0x48e72189, 0x8df85a07, 0x0a03fb3c, 0xea9b2e0a, 0xff4d8a35, 0xcd9c1d77, 0x28a98c2e },
+	{ 0x280c1184, 0x1ef4b3b4, 0xae5e2a2c, 0xcf7ad4c2, 0xc5a36518, 0xb8063b6c, 0x65dfc08c, 0x2348c4b9 },
+	{ 0x22a423de, 0x9c533be7, 0x7cdf6e0d, 0x642a9d12, 0x409ac005, 0x0dbc7546, 0xb23d5082, 0x00f04c8d },
+	{ 0x83a24acc, 0xa2afb83f, 0x525d536e, 0x92f255d9, 0x0286dd19, 0x5e756608, 0xc52d2549, 0x187bb1a6 },
+	{ 0x26817bb1, 0x0a79c430, 0x99537df0, 0x7bb2cc7c, 0x0241e6de, 0xb6ca27d5, 0x3632f04c, 0x007ab33f },
+	{ 0x818f61bf, 0x8e9003e5, 0x9bf8fec2, 0x8c9bbf34, 0x3f01534e, 0x53dceecd, 0xe529aa3c, 0x2690966b },
+	{ 0xbf574c64, 0x2214f7b1, 0xf7317df2, 0x28f9232f, 0xb0ad75cd, 0xe57584a8, 0xdc176d03, 0x2b81fb59 },
+	{ 0x742f8f03, 0xf4b67d7c, 0x63d068cc, 0x681b2ddc, 0x1bfb576a, 0x8ce5bcef, 0xd2b63cfe, 0x167c2951 },
+	{ 0xb5ad7c3f, 0xf8ad4ae2, 0x83cb85be, 0x2d60c6ff, 0x5d9429f7, 0xd976fd2b, 0x3f9ad9a9, 0x24407ce7 },
+	{ 0x9edcef8b, 0x7f753d97, 0xb1479120, 0x5f3f172c, 0x74096c6e, 0x8db16279, 0x39c108cf, 0x2b377b35 },
+	{ 0xa0000006, 0x974bc177, 0xda58a367, 0xf13771b2, 0x0908122e, 0x51e1a247, 0x4729c0fa, 0x2259d6b1 }
+};
+
+
+ cudaDeviceProp prop;
+    HANDLE_ERROR(cudaGetDeviceProperties(&prop, 0));
+
+    if (!prop.deviceOverlap){
+        exit( EXIT_FAILURE );
+    }
+
+    
+    cudaStream_t stream1;
+    HANDLE_ERROR(cudaStreamCreate(&stream1)); 
+
+    size_t a_domain_len = calc_domain_len(a_len);
+
+    std::cout << "mlock resqq)): "<< mlock(a_repr, a_len * sizeof(embedded_field)) << std::endl;
+
+    embedded_field* dev_a = nullptr;
+
+    HANDLE_ERROR(cudaMalloc((void**)&dev_a, a_domain_len * sizeof(embedded_field)));
+    HANDLE_ERROR(cudaMemcpyAsync(dev_a, a_repr, a_len * sizeof(embedded_field), cudaMemcpyHostToDevice, stream1));
+    
+    HANDLE_ERROR(cudaMemsetAsync(dev_a + a_len, 0, (a_domain_len - a_len) * sizeof(embedded_field), stream1));
+
+    Geometry FFT_geometry = find_suitable_geometry(fft_iteration, 0, prop.multiProcessorCount);
+    FFT_geometry.gridSize /= 3;
+
+    const uint256_g* m_inv2 = (const uint256_g*)m_inv;
+
+    iFFT(dev_a, a_domain_len, *m_inv2, FFT_geometry, stream1, 0);
+    cosetFFT(dev_a, a_domain_len, FFT_geometry, stream1);
+
+
+    HANDLE_ERROR( cudaStreamSynchronize( stream1 ) );
+    HANDLE_ERROR( cudaStreamDestroy( stream1 ) );
+
+    munlock(a_repr, a_len * sizeof(embedded_field));
+
+    embedded_field* host_check = (embedded_field*)malloc(a_domain_len * sizeof(embedded_field));
+    
+    HANDLE_ERROR(cudaMemcpy(host_check, dev_a, a_domain_len * sizeof(embedded_field), cudaMemcpyDeviceToHost));
+    
+    HANDLE_ERROR(cudaFree(dev_a));
+
+    //print these arrays to files - we'll compare them
+
+    dump_to_file((uint8_t*)host_check, a_domain_len, "GPU");
+    dump_to_file((uint8_t*)check_arr, a_domain_len, "RUST");
+
+
+
+    // size_t domain_len = calc_domain_len(pr_data.a_len);
+    // embedded_field* host_check = (embedded_field*)malloc(domain_len * sizeof(embedded_field));
+    // HANDLE_ERROR(cudaMemcpy(host_check, res, domain_len * sizeof(embedded_field), cudaMemcpyDeviceToHost));
+
+    //print these arrays to files - we'll compare them
+
+    // dump_to_file((uint8_t*)host_check, domain_len, "GPU");
+    // dump_to_file((uint8_t*)check_arr, domain_len, "RUST");
+
+     // HANDLE_ERROR(cudaMemcpy(&res, dev_c, sizeof(ec_point), cudaMemcpyDeviceToHost));
+    // memcpy(result_ptr, &res, sizeof(affine_point));
+
+
+#include <fstream> 
+#include <iomanip>
+
+std::ostream& operator<<(std::ostream& os, const uint256_g num)
+{
+    os << "0x";
+    for (int i = 7; i >= 0; i--)
+    {
+        os << std::setfill('0') << std::hex << std::setw(8) << num.n[i];
+    }
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const uint512_g num)
+{
+    os << "0x";
+    for (int i = 15; i >= 0; i--)
+    {
+        os << std::setfill('0') << std::hex << std::setw(8) << num.n[i];
+    }
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const ec_point& pt)
+{
+    os << "x = " << pt.x << std::endl;
+    os << "y = " << pt.y << std::endl;
+    os << "z = " << pt.z << std::endl;
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const affine_point& pt)
+{
+    os << "x = " << pt.x << std::endl;
+    os << "y = " << pt.y << std::endl;
+    return os;
+}
+
+void dump_to_file(const uint8_t* raw_arr, size_t arr_len, const char* filename)
+{
+    std::ofstream fstream;
+    fstream.open(filename);
+    std::ostream& stream = fstream;
+
+    const uint256_g* arr = (const uint256_g*)(raw_arr);
+
+    for (size_t i = 0; i < arr_len; i++)
+    {
+        stream << i << ") " << arr[i] << std::endl;
+    }
+    stream << std::endl;
+
+    fstream.close();
+}
+
+constexpr size_t BENCH_LEN = 1048576;
+//constexpr size_t BENCH_LEN = 4096 * 4;
+
+Groth16_prover_data prepare_bench()
+{
+    embedded_field* A_host_arr = nullptr;
+    embedded_field* B_host_arr = nullptr;
+    embedded_field* C_host_arr = nullptr;
+    affine_point* H_host_arr = nullptr;
+
+    embedded_field* A_dev_arr = nullptr;
+    embedded_field* B_dev_arr = nullptr;
+    embedded_field* C_dev_arr = nullptr;
+    affine_point* H_dev_arr = nullptr;
+
+    curandState *devStates = nullptr;
+
+    //allocate device arrays
+
+    cudaMalloc(&A_dev_arr, BENCH_LEN * sizeof(embedded_field));
+    cudaMalloc(&B_dev_arr, BENCH_LEN * sizeof(embedded_field));
+    cudaMalloc(&C_dev_arr, BENCH_LEN * sizeof(embedded_field));
+    cudaMalloc(&H_dev_arr, BENCH_LEN * sizeof(affine_point));
+
+    size_t gridSize = 2048;
+    size_t blockSize = 256;
+  
+    cudaMalloc((void **)&devStates, gridSize * blockSize * sizeof(curandState));
+   
+    gen_random_array_kernel<<<gridSize, blockSize>>>(A_dev_arr, BENCH_LEN, devStates, rand());
+    gen_random_array_kernel<<<gridSize, blockSize>>>(B_dev_arr, BENCH_LEN, devStates, rand());
+    gen_random_array_kernel<<<gridSize, blockSize>>>(C_dev_arr, BENCH_LEN, devStates, rand());
+    gen_random_array_kernel<<<gridSize, blockSize>>>(H_dev_arr, BENCH_LEN, devStates, rand());
+
+    A_host_arr = (embedded_field*)malloc(BENCH_LEN * sizeof(embedded_field));
+    B_host_arr = (embedded_field*)malloc(BENCH_LEN * sizeof(embedded_field));
+    C_host_arr = (embedded_field*)malloc(BENCH_LEN * sizeof(embedded_field));
+    H_host_arr = (affine_point*)malloc(BENCH_LEN * sizeof(affine_point));
+
+    cudaMemcpy(A_host_arr, A_dev_arr, BENCH_LEN * sizeof(embedded_field), cudaMemcpyDeviceToHost);
+    cudaMemcpy(B_host_arr, B_dev_arr, BENCH_LEN * sizeof(embedded_field), cudaMemcpyDeviceToHost);
+    cudaMemcpy(C_host_arr, C_dev_arr, BENCH_LEN * sizeof(embedded_field), cudaMemcpyDeviceToHost);
+    cudaMemcpy(H_host_arr, H_dev_arr, BENCH_LEN * sizeof(affine_point), cudaMemcpyDeviceToHost);
+
+    cudaFree(A_dev_arr);
+    cudaFree(B_dev_arr);
+    cudaFree(C_dev_arr);
+    cudaFree(H_dev_arr);
+    cudaFree(devStates);
+
+    uint256_g n_inv = { 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00001000 };
+    uint256_g tau_inv = { 0x3bac0b6a, 0xe0a8dd8e, 0x0d8d7f96, 0xaba0aa52, 0x65713ead, 0x9f30cd5e, 0x8a995ead, 0x13208abb };
+
+    Groth16_prover_data res;
+
+    // res.a_arr = (const uint8_t*)A_host_arr;
+    // res.a_len = BENCH_LEN;
+    // res.a_len_inv = n_inv;
+
+    // res.b_arr = (uint32_t*)B_host_arr;
+    // res.b_len = BENCH_LEN;
+    // res.b_len_inv = n_inv;
+
+    // res.c_arr = (uint32_t*)C_host_arr;
+    // res.c_len = BENCH_LEN;
+    // res.c_len_inv = n_inv;
+
+    // res.h_arr = (uint32_t*)H_host_arr;
+    // res.tau_inv = tau_inv;
+
+    return res;
+}
+
+    //here we jusy test GROTH16)
+    std::cout << "Start!" << std::endl;
+
+    cudaDeviceProp prop;
+    HANDLE_ERROR(cudaGetDeviceProperties(&prop, 0));
+
+    if (!prop.deviceOverlap)
+    {
+        exit( EXIT_FAILURE );
+    }
+
+    Geometry FFT_geometry = find_suitable_geometry(fft_iteration, 0, prop.multiProcessorCount);
+    FFT_geometry.gridSize /= 3;
+
+    embedded_field* A_dev_arr = nullptr;
+    curandState *devStates = nullptr;
+
+    //allocate device arrays
+
+    cudaMalloc(&A_dev_arr, TEST_BENCH_LEN * sizeof(embedded_field));
+    size_t gridSize = 2048;
+    size_t blockSize = 256;
+  
+    cudaMalloc((void **)&devStates, gridSize * blockSize * sizeof(curandState));
+    
+    srand(time(NULL));
+    gen_random_array_kernel<<<gridSize, blockSize>>>(A_dev_arr, TEST_BENCH_LEN, devStates, rand());
+
+    embedded_field* A_host_arr = (embedded_field*)malloc(TEST_BENCH_LEN * sizeof(embedded_field));
+    embedded_field* B_host_arr = (embedded_field*)malloc(TEST_BENCH_LEN * sizeof(embedded_field));
+
+    cudaMemcpy(A_host_arr, A_dev_arr, TEST_BENCH_LEN * sizeof(embedded_field), cudaMemcpyDeviceToHost);
+
+    cudaStream_t stream1;
+    HANDLE_ERROR(cudaStreamCreate(&stream1)); 
+
+    uint256_g m_inv = { 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00001000 };
+    //0x00001000
+    HANDLE_ERROR(cudaMemcpyToSymbol(elems, &m_inv, sizeof(uint256_g), 0, cudaMemcpyHostToDevice));
+
+    FFT(A_dev_arr, TEST_BENCH_LEN, FFT_geometry, stream1);
+    iFFT(A_dev_arr, TEST_BENCH_LEN, m_inv, FFT_geometry, stream1, 0);
+    HANDLE_ERROR( cudaStreamSynchronize( stream1 ) );
+
+    cudaMemcpy(B_host_arr, A_dev_arr, TEST_BENCH_LEN * sizeof(embedded_field), cudaMemcpyDeviceToHost);
+
+    dump_to_file((uint8_t*)A_host_arr, TEST_BENCH_LEN, "FIRST");
+    dump_to_file((uint8_t*)B_host_arr, TEST_BENCH_LEN, "SECOND");
+
+    std::cout << "End!" << std::endl;
     

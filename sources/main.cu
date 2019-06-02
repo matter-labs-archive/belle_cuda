@@ -432,8 +432,8 @@ ecc_multiexp_func_vec_t multiexp_curve_point_bench = {
     //{"naive block level approach with atomics", naive_multiexp_kernel_block_level_atomics_driver},
     //{"naive block level approach with recursion", naive_multiexp_kernel_block_level_recursion_driver},
     //{"Pippenger: 2**8 elems per bin", small_Pippenger_driver},
-    //{"Pippenger: 2**16 elems per bin", large_Pippenger_driver},
-    {"Sorting based Pippenger", sorting_based_Pippenger_driver}
+    {"Pippenger: 2**16 elems per bin", large_Pippenger_driver},
+    //{"Sorting based Pippenger", sorting_based_Pippenger_driver}
 };
 
 
@@ -506,11 +506,11 @@ int main(int argc, char* argv[])
     // std::cout << "ECC affine exponentiation benchmark: " << std::endl << std::endl;
     // gpu_benchmark(affine_exp_curve_point_bench, bench_len);
 
-    // std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
-    // gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE, true);
+    std::cout << "ECC multi-exponentiation benchmark: " << std::endl << std::endl;
+    gpu_benchmark(multiexp_curve_point_bench, bench_len, OUTPUT_FILE, true);
 
-    std::cout << "FFT benchmark: " << std::endl << std::endl;
-    gpu_benchmark(FFT_bench, bench_len, OUTPUT_FILE);
+    // std::cout << "FFT benchmark: " << std::endl << std::endl;
+    // gpu_benchmark(FFT_bench, bench_len, OUTPUT_FILE);
    
     return 0;
 }

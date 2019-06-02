@@ -108,6 +108,41 @@ struct affine_point
     uint256_g y;
 };
 
+//this is a field embedded into a group of points on elliptic curve
+
+struct embedded_field
+{
+	uint256_g rep_;
+    
+    DEVICE_FUNC explicit embedded_field(const uint256_g rep);
+	DEVICE_FUNC embedded_field();
+	
+	static DEVICE_FUNC embedded_field zero();
+	static DEVICE_FUNC embedded_field one();
+	
+    DEVICE_FUNC bool operator==(const embedded_field& other) const;
+	DEVICE_FUNC bool operator!=(const embedded_field& other) const;
+	
+	DEVICE_FUNC operator uint256_g() const;
+	DEVICE_FUNC embedded_field operator-() const;
+	
+	//NB: for now we assume that highest possible limb bit is zero for the field modulus
+	DEVICE_FUNC embedded_field& operator+=(const embedded_field& other);
+	DEVICE_FUNC embedded_field& operator-=(const embedded_field& other);
+	
+	//here we mean montgomery multiplication
+	DEVICE_FUNC embedded_field& operator*=(const embedded_field& other);
+	
+	friend DEVICE_FUNC embedded_field operator+(const embedded_field& left, const embedded_field& right);
+	friend DEVICE_FUNC embedded_field operator-(const embedded_field& left, const embedded_field& right);
+	friend DEVICE_FUNC embedded_field operator*(const embedded_field& left, const embedded_field& right);
+};
+	
+DEVICE_FUNC embedded_field operator+(const embedded_field& left, const embedded_field& right);
+DEVICE_FUNC embedded_field operator-(const embedded_field& left, const embedded_field& right);
+DEVICE_FUNC embedded_field operator*(const embedded_field& left, const embedded_field& right);
+
+
 //miscellaneous helpful staff
 //------------------------------------------------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -147,6 +182,7 @@ void get_device_info();
 
 extern DEVICE_VAR CONST_MEMORY uint256_g EMBEDDED_FIELD_P; 
 extern DEVICE_VAR CONST_MEMORY uint256_g EMBEDDED_FIELD_R; 
+extern DEVICE_VAR CONST_MEMORY uint256_g EMBEDDED_FIELD_R_inv; 
 extern DEVICE_VAR CONST_MEMORY uint32_t EMBEDDED_FIELD_N;
 
 //base field
@@ -185,6 +221,12 @@ extern DEVICE_VAR CONST_MEMORY uint256_g BASE_FIELD_N_LARGE;
 
 extern DEVICE_FUNC size_t ROOTS_OF_UNTY_ARR_LEN;
 extern DEVICE_FUNC CONST_MEMORY uint256_g EMBEDDED_FIELD_ROOTS_OF_UNITY[]; 
+
+extern DEVICE_FUNC size_t MULT_GEN_ARR_LEN;
+extern DEVICE_FUNC CONST_MEMORY uint256_g EMBEDDED_FIELD_MULT_GEN_ARR[];
+
+extern DEVICE_FUNC size_t MULT_GEN_INV_ARR_LEN;
+extern DEVICE_FUNC CONST_MEMORY uint256_g EMBEDDED_FIELD_MULT_GEN_INV_ARR[];
 
 //a bunch of helpful structs
 //--------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -398,6 +440,7 @@ DEVICE_FUNC ec_point ECC_wNAF_exp_JAC(const ec_point&, const uint256_g&);
 //random elements generators
 
 DEVICE_FUNC void gen_random_elem(uint256_g&, curandState&);
+DEVICE_FUNC void gen_random_elem(embedded_field&, curandState&);
 DEVICE_FUNC void gen_random_elem(ec_point&, curandState&);
 DEVICE_FUNC void gen_random_elem(affine_point&, curandState&);
 

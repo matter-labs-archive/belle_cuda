@@ -855,7 +855,6 @@ void BUILD_HISTOGRAM(affine_point* pt_arr, uint256_g* power_arr, ec_point* bins,
 {
     {
         kernel_geometry geometry = find_optimal_geometry(init_large_histo, 0, smCount);
-        std::cout << geometry.gridSize << ", " <<  geometry.blockSize << std::endl;
         init_large_histo<<<geometry.gridSize, geometry.blockSize>>>(bins, locks);
         cudaDeviceSynchronize();
     }
@@ -1071,8 +1070,6 @@ void REDUCE_ARRAY(ec_point* in_arr, ec_point* out_arr, Lock* locks, uint smCount
  
     uint BLOCKS_PER_BIN = gridSize / NUM_OF_CHUNKS;
 
-    std::cout << "Reduce: blocks per bin: " << BLOCKS_PER_BIN << std::endl;
-
     reduce<<<gridSize, blockSize>>>(in_arr, out_arr, locks, BLOCKS_PER_BIN);
     cudaDeviceSynchronize();
 }
@@ -1102,9 +1099,18 @@ __global__ void final_shrinking(ec_point* arr, ec_point* total, size_t gap)
             temp[tid] = ECC_ADD(temp[tid], temp[tid + d]);
         __syncthreads();
     }
-    
+
     if (tid == 0)
-        *total = temp[0];
+    {
+        //dirty Hack: delete it - we transform this point tp affine
+        ec_point res = temp[0];
+        uint256_g z_inv = FIELD_MUL_INV(res.z);
+        res.x = MONT_MUL(res.x, z_inv);
+        res.y = MONT_MUL(res.y, z_inv);
+        res.z = BASE_FIELD_R;
+
+        *total = res;
+    }
 }
 
 //Large Pippenger driver
@@ -1136,12 +1142,8 @@ void large_Pippenger_driver(affine_point* point_arr, uint256_g* power_arr, ec_po
     cudaGetDeviceProperties(&prop, 0);
 	uint32_t smCount = prop.multiProcessorCount;
 
-
-
     BUILD_HISTOGRAM(point_arr, power_arr, temporary_array, locks, arr_len, smCount);
-    //cudaMemcpy(out + 1, temporary_array, 65535 * sizeof(ec_point), cudaMemcpyDeviceToDevice);
     SCAN_ARRAY(temporary_array, out_temp_arr, smCount);
-    
     //TODO: there is no need for additional array allocation!
     
     REDUCE_ARRAY(temporary_array, out_temp_arr, locks, smCount);
