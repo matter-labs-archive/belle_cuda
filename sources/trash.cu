@@ -4150,3 +4150,45 @@ Groth16_prover_data prepare_bench()
 
     std::cout << "End!" << std::endl;
     
+
+
+constexpr size_t BENCH_LEN = 4096 * 4;
+
+void test_multiexp()
+{
+    affine_point* A_host_arr = nullptr;
+    uint256_g* B_host_arr = nullptr;
+
+    affine_point* A_dev_arr = nullptr;
+    uint256_g* B_dev_arr = nullptr;
+
+    curandState *devStates = nullptr;
+
+    //allocate device arrays
+
+    cudaMalloc(&A_dev_arr, BENCH_LEN * sizeof(affine_point));
+    cudaMalloc(&B_dev_arr, BENCH_LEN * sizeof(uint256_g));
+  
+    size_t gridSize = 2048;
+    size_t blockSize = 256;
+  
+    cudaMalloc((void **)&devStates, gridSize * blockSize * sizeof(curandState));
+   
+    gen_random_array_kernel<<<gridSize, blockSize>>>(A_dev_arr, BENCH_LEN, devStates, rand());
+    gen_random_array_kernel<<<gridSize, blockSize>>>(B_dev_arr, BENCH_LEN, devStates, rand());
+
+    A_host_arr = (affine_point*)malloc(BENCH_LEN * sizeof(affine_point));
+    B_host_arr = (uint256_g*)malloc(BENCH_LEN * sizeof(uint256_g));
+
+    cudaMemcpy(A_host_arr, A_dev_arr, BENCH_LEN * sizeof(affine_point), cudaMemcpyDeviceToHost);
+    cudaMemcpy(B_host_arr, B_dev_arr, BENCH_LEN * sizeof(uint256_g), cudaMemcpyDeviceToHost);
+
+    cudaFree(A_dev_arr);
+    cudaFree(B_dev_arr);
+    cudaFree(devStates);
+
+    affine_point res;
+    uint8_t* res_ptr = (uint8_t*)(&res);
+
+    dense_multiexp(BENCH_LEN, (uint8_t*)B_host_arr, (uint8_t*)A_host_arr, false, res_ptr);
+}

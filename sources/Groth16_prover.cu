@@ -421,7 +421,6 @@ affine_point Groth16_proof(const Groth16_prover_data* pr_data)
     return res;
 }
 
-
 extern "C"
 {
     int EXPORT evaluate_h(size_t a_len, size_t b_len, size_t c_len, size_t h_len, const uint8_t* a_repr, const uint8_t* b_repr,
@@ -445,14 +444,13 @@ extern "C"
         affine_point res = Groth16_proof(&pr_data);
 
         memcpy(result_ptr, &res, sizeof(affine_point));
-
         return 0;
     };
 
     //if flag in_mont_form = TRUE then tthe array of powers is in mont form and all the numbers should be converted to standard form
     //inside the CUDA kernel
 
-    int EXPORT multiexp_on_device(size_t len, const uint8_t* point_repr, const uint8_t* power_repr, bool repr_flag, uint8_t* result_ptr)
+    int EXPORT dense_multiexp(size_t len, const uint8_t* power_repr, const uint8_t* point_repr, bool repr_flag, uint8_t* result_ptr)
     {
         affine_point* dev_point_arr = nullptr;
         uint256_g* dev_power_arr  = nullptr;
@@ -485,15 +483,12 @@ extern "C"
         HANDLE_ERROR(cudaFree(dev_res));
 
         memcpy(result_ptr, &res, sizeof(affine_point));
-
         return 0;
     };
 
 
 }
 
-
-constexpr size_t TEST_BENCH_LEN = 1048576;
 
 int main(int argc, char* argv[])
 {
